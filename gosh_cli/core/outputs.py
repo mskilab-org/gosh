@@ -210,6 +210,34 @@ class Outputs:
                             patient_data[patient_id][key] = row[key].strip()
         return patient_data
 
+    def _apply_old_mapping(self, record: dict) -> None:
+        """Apply the old output files mapping to the record."""
+        mapping = OUTPUT_FILES_MAPPING_OLD
+        for key, pattern in mapping.items():
+            if record.get(key):
+                continue  # prefer samplesheet value if available
+            patterns = pattern if isinstance(pattern, list) else [pattern]
+            for pat in patterns:
+                # Derive process directory prefix from the pattern (assume the prefix is the literal part before '/.*/')
+                if '/.*/' in pat:
+                    process_prefix = pat.split('/.*/')[0]
+                else:
+                    process_prefix = os.path.dirname(pat)
+                # Build the search directory using the process prefix
+                search_dir = os.path.join(self.outputs_dir, process_prefix)
+                search_pattern = os.path.join(search_dir, "**", "*")
+                for filepath in glob.glob(search_pattern, recursive=True):
+                    # Ensure the filepath contains the patient ID
+                    if record["patient_id"] not in filepath:
+                        continue
+                    if re.search(pat, filepath):
+                        record[key] = filepath
+                        if pat.endswith("/"):
+                            record[key] = os.path.dirname(filepath)
+                        break
+                if record.get(key):
+                    break
+
     def _collect_outputs(self, use_old_output_files_mapping = True) -> list:
         """
         For each patient_id from the samplesheet, scan the outputs directory to find files matching
@@ -235,39 +263,13 @@ class Outputs:
                     record[key] = data[key]
 
             if use_old_output_files_mapping:
-                mapping = OUTPUT_FILES_MAPPING_OLD
+                self._apply_old_mapping(record)
             else:
                 mapping = OUTPUT_FILES_MAPPING
-
-            for key, pattern in mapping.items():
-                if record.get(key):
-                    continue  # prefer samplesheet value if available
-                patterns = pattern if isinstance(pattern, list) else [pattern]
-                if use_old_output_files_mapping:
-                    # for old mapping: path is {process_name}/{patient_id}/{output_file}
-                    for pat in patterns:
-                        # Derive process directory prefix from the pattern
-                        # (assume the prefix is the literal part before '/.*/')
-                        if '/.*/' in pat:
-                            process_prefix = pat.split('/.*/')[0]
-                        else:
-                            process_prefix = os.path.dirname(pat)
-                        # Build the search directory using the process prefix
-                        search_dir = os.path.join(self.outputs_dir, process_prefix)
-                        search_pattern = os.path.join(search_dir, "**", "*")
-                        for filepath in glob.glob(search_pattern, recursive=True):
-                            # Ensure the filepath contains the patient ID
-                            if record["patient_id"] not in filepath:
-                                continue
-                            if re.search(pat, filepath):
-                                record[key] = filepath
-                                if pat.endswith("/"):
-                                    record[key] = os.path.dirname(filepath)
-                                break
-                        if record.get(key):
-                            break
-                else:
-                    # existing new mapping branch
+                for key, pattern in mapping.items():
+                    if record.get(key):
+                        continue  # prefer samplesheet value if available
+                    patterns = pattern if isinstance(pattern, list) else [pattern]
                     patient_dir = os.path.join(self.outputs_dir, patient_id)
                     for pat in patterns:
                         search_pattern = os.path.join(patient_dir, "**", "*")
@@ -280,6 +282,21 @@ class Outputs:
                                 break
                         if record.get(key):
                             break
+
+            # New: Populate purity and ploidy from purple.purity.tsv (if available)
+            purity_file = record["purple_pp_best_fit"]
+            if purity_file:
+                with open(purity_file) as pf:
+                    lines = pf.read().splitlines()
+                    if len(lines) >= 2:
+                        headers = lines[0].split("\t")
+                        values = lines[1].split("\t")
+                        mapping_dict = dict(zip(headers, values))
+                        if "purity" in mapping_dict:
+                            record["purity"] = mapping_dict["purity"]
+                        if "ploidy" in mapping_dict:
+                            record["ploidy"] = mapping_dict["ploidy"]
+
             outputs_list.append(record)
         return outputs_list
 
