@@ -3,3 +3,4 @@ spec.md
 */**/__pycache__
 .aider*
 outputs.csv
+dist/

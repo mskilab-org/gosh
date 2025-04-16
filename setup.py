@@ -2,8 +2,10 @@ from setuptools import setup, find_packages
 
 setup(
     name='gosh-cli',
-    version='0.1.0',
+    version='0.1.1',
     description='gOSh - gOS sHell: A CLI tool for the nf-gOS pipeline',
+    long_description=open('README.md').read(),
+    long_description_content_type='text/markdown',
     author='Shihab Dider',
     packages=find_packages(where='.'),
     package_dir={'': '.'},
@@ -19,4 +21,9 @@ setup(
         ],
     },
     python_requires='>=3.6',
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+    ],
 )
