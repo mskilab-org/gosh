@@ -16,6 +16,7 @@ OUTPUT_KEYS = [
     "qc_dup_rate",
     "qc_alignment_summary",
     "qc_insert_size",
+    "qc_coverage_metrics",
     "qc_coverage_metrics_tumor",
     "qc_coverage_metrics_normal",
     "msisensorpro",
@@ -65,17 +66,23 @@ OUTPUT_FILES_MAPPING_OLD = {
     "qc_coverage_metrics": r"qc_metrics/picard/.*/.*coverage_metrics",
     "qc_coverage_metrics_tumor": r"qc_metrics/picard/tumor/.*/.*coverage_metrics",
     "qc_coverage_metrics_normal": r"qc_metrics/picard/normal/.*/.*coverage_metrics",
-    "msisensorpro": r"msisensorpro/.*/.*_somatic$",
+    "msisensorpro": r"msisensorpro/.*_somatic$",
     "structural_variants": [
         r"sv_calling/gridss_somatic/.*/.*high_confidence_somatic\.vcf\.bgz$",
         r"tumor_only_junction_filter/.*/.*somatic\.filtered\.sv\.rds$"
     ],
     "structural_variants_unfiltered": r"sv_calling/gridss/.*/.*\.gridss\.filtered\.vcf\.gz$",
     "coverage_tumor": r"coverage/dryclean_tumor/.*/drycleaned\.cov\.rds$",
-    "snvs_somatic": r"snv_calling/sage/somatic/tumor_only_filter/.*/.*\.sage\.pass_filtered\.tumoronly\.vcf\.gz$",
+    "snvs_somatic": [
+        r"snv_calling/sage/somatic/.*/.*\.sage\.pass_filtered\.vcf\.gz$",
+        r"snv_calling/sage/somatic/tumor_only_filter/.*/.*\.sage\.pass_filtered\.tumoronly\.vcf\.gz$",
+    ],
     "snvs_somatic_unfiltered": r"snv_calling/sage/somatic/.*/.*sage\.somatic\.vcf\.gz$",
     "snvs_germline": r"snv_calling/sage/germline/.*/.*sage\.germline\.vcf\.gz$",
-    "het_pileups": r"(hetpileups|amber)/.*/sites\.txt$",
+    "het_pileups": [
+        r"amber/.*/sites\.txt$",
+        r"hetpileups/.*/sites\.txt$",
+    ],
     "amber_dir": r"amber/.*/amber/",
     "purple_pp_range": r"purple/.*/.*purple\.purity\.range\.tsv$",
     "purple_pp_best_fit": r"purple/.*/.*purple\.purity\.tsv$",
@@ -83,13 +90,14 @@ OUTPUT_FILES_MAPPING_OLD = {
     "nseg": r"cbs/.*/nseg.rds",
     "multiplicity": r"snv_multiplicity/.*/.*est_snv_cn_somatic\.rds$",
     "multiplicity_germline": r"snv_multiplicity/.*/.*est_snv_cn_germline\.rds$",
-    "multiplicity_hetsnps": r"snv_multiplicity/.*/.*est_snv_cn_hetsnps\.rds$",
-    "variant_annotations_somatic": r"snpeff/somatic/.*/.*ann\.bcf$",
-    "variant_annotations_germline": r"snpeff/germline/.*/.*ann\.bcf$",
-    "oncokb_snv": r"oncokb/.*/oncokb_snv\.rds$",
-    "oncokb_cna": r"oncokb/.*/oncokb_cna\.rds$",
-    "oncokb_fusions": r"oncokb/.*/oncokb_fusions\.rds$",
+    "multiplicity_hetsnps": r"snv_multiplicity/.*/.*est_snv_cn_hets\.rds$",
+    "variant_annotations_somatic": r"variant_annotations/snpeff/somatic/.*/.*ann\.bcf$",
+    "variant_annotations_germline": r"variant_annotations/snpeff/germline/.*/.*ann\.bcf$",
+    "oncokb_snv": r"oncokb/.*/merged_oncokb\.maf$",
+    "oncokb_cna": r"oncokb/.*/merged_oncokb_cna\.tsv$",
+    "oncokb_fusions": r"oncokb/.*/merged_oncokb_fusions\.tsv$",
     "karyograph": r"jabba/.*/karyograph\.rds$",
+    "jabba_rds": r"jabba/.*/jabba\.simple\.rds$",
     "jabba_gg": r"jabba/.*/jabba\.simple\.gg\.rds$",
     "jabba_gg_balanced": r"non_integer_balance/.*/non_integer\.balanced\.gg\.rds$",
     "jabba_gg_allelic": r"lp_phased_balance/.*/lp_phased\.balanced\.gg\.rds$",
@@ -115,50 +123,54 @@ OUTPUT_FILES_MAPPING = {
     "qc_coverage_metrics_normal": r"picard_qc/normal/.*/.*coverage_metrics",
     "msisensorpro": r"msisensorpro/.*_somatic$",
     "structural_variants": [
-        r"gridss.*/.*/.*high_confidence_somatic\.vcf\.bgz$",
+        r"gridss/.*high_confidence_somatic\.vcf\.bgz$",
         r"tumor_only_junction_filter/.*/.*somatic\.filtered\.sv\.rds$"
     ],
     "structural_variants_unfiltered": r"gridss.*/.*\.gridss\.filtered\.vcf\.gz$",
-    "coverage_tumor": r"dryclean/tumor/.*/drycleaned\.cov\.rds$",
-    "snvs_somatic": r"sage/somatic/tumor_only_filter/.*/.*\.sage\.pass_filtered\.tumoronly\.vcf\.gz$",
-    "snvs_somatic_unfiltered": r"sage/somatic/.*/.*sage\.somatic\.vcf\.gz$",
-    "snvs_germline": r"sage/germline/.*/.*sage\.germline\.vcf\.gz$",
+    "coverage_tumor": r"dryclean/tumor/drycleaned\.cov\.rds$",
+    "snvs_somatic": [
+        r"sage/somatic/.*\.sage\.pass_filtered\.vcf\.gz$",
+        r"sage/somatic/tumor_only_filter/.*\.sage\.pass_filtered\.tumoronly\.vcf\.gz$",
+    ],
+    "snvs_somatic_unfiltered": r"sage/somatic/.*sage\.somatic\.vcf\.gz$",
+    "snvs_germline": r"sage/germline/.*sage\.germline\.vcf\.gz$",
     "het_pileups": r"amber/sites\.txt$",
     "amber_dir": r"amber/amber/",
     "purple_pp_range": r"purple/.*purple\.purity\.range\.tsv$",
     "purple_pp_best_fit": r"purple/.*purple\.purity\.tsv$",
     "seg": r"cbs/seg.rds",
     "nseg": r"cbs/nseg.rds",
-    "multiplicity": r"snv_multiplicity/.*/.*est_snv_cn_somatic\.rds$",
-    "multiplicity_germline": r"snv_multiplicity/.*/.*est_snv_cn_germline\.rds$",
-    "multiplicity_hetsnps": r"snv_multiplicity/.*/.*est_snv_cn_hetsnps\.rds$",
-    "variant_annotations_somatic": r"snpeff/somatic/.*/.*ann\.bcf$",
-    "variant_annotations_germline": r"snpeff/germline/.*/.*ann\.bcf$",
-    "oncokb_snv": r"oncokb/.*/oncokb_snv\.rds$",
-    "oncokb_cna": r"oncokb/.*/oncokb_cna\.rds$",
-    "oncokb_fusions": r"oncokb/.*/oncokb_fusions\.rds$",
-    "karyograph": r"jabba/.*/karyograph\.rds$",
-    "jabba_gg": r"jabba/.*/jabba\.simple\.gg\.rds$",
-    "jabba_gg_balanced": r"non_integer_balance/.*/non_integer\.balanced\.gg\.rds$",
-    "jabba_gg_allelic": r"lp_phased_balance/.*/lp_phased\.balanced\.gg\.rds$",
-    "events": r"events/.*/complex\.rds$",
-    "fusions": r"fusions/.*/fusions\.rds$",
+    "multiplicity": r"snv_multiplicity/.*est_snv_cn_somatic\.rds$",
+    "multiplicity_germline": r"snv_multiplicity/.*est_snv_cn_germline\.rds$",
+    "multiplicity_hetsnps": r"snv_multiplicity/.*est_snv_cn_hets\.rds$",
+    "variant_annotations_somatic": r"snpeff/somatic/.*ann\.bcf$",
+    "variant_annotations_germline": r"snpeff/germline/.*ann\.bcf$",
+    "oncokb_snv": r"oncokb/merged_oncokb\.maf$",
+    "oncokb_cna": r"oncokb/merged_oncokb_cna\.tsv$",
+    "oncokb_fusions": r"oncokb/merged_oncokb_fusions\.tsv$",
+    "karyograph": r"jabba/karyograph\.rds$",
+    "jabba_rds": r"jabba/jabba\.simple\.rds$",
+    "jabba_gg": r"jabba/jabba\.simple\.gg\.rds$",
+    "jabba_gg_balanced": r"non_integer_balance/non_integer\.balanced\.gg\.rds$",
+    "jabba_gg_allelic": r"lp_phased_balance/lp_phased\.balanced\.gg\.rds$",
+    "events": r"events/complex\.rds$",
+    "fusions": r"fusions/fusions\.rds$",
     "signatures_activities_sbs": r"sigprofilerassignment/sbs_results/Assignment_Solution/Activities/sbs_Assignment_Solution_Activities\.txt",
     "signatures_matrix_sbs": r"sigprofilerassignment/sig_inputs/output/SBS/sigmat_results\.SBS96\.all",
     "signatures_decomposed_sbs": r"sigprofilerassignment/sbs_results/Assignment_Solution/Activities/Decomposed_MutationType_Probabilities\.txt",
     "signatures_activities_indel": r"sigprofilerassignment/indel_results/Assignment_Solution/Activities/indel_Assignment_Solution_Activities\.txt",
     "signatures_matrix_indel": r"sigprofilerassignment/sig_inputs/output/ID/sigmat_results\.ID83\.all",
     "signatures_decomposed_indel": r"sigprofilerassignment/indel_results/.*/Decomposed_MutationType_Probabilities\.txt",
-    "hrdetect": r"hrdetect/.*/hrdetect_results\.rds",
-    "onenesstwoness": r"oneness_twoness/.*/oneness_twoness\.rds$",
+    "hrdetect": r"hrdetect/hrdetect_results\.rds",
+    "onenesstwoness": r"onenesstwoness/onenesstwoness_results\.rds$",
 }
 
 class Outputs:
-    def __init__(self, outputs_dir: str, samplesheet: str):
-        self.outputs_dir = outputs_dir
+    def __init__(self, outputs_dir: str, samplesheet: str, use_old: bool = False):
+        self.outputs_dir = os.path.abspath(outputs_dir)
         self.samplesheet = samplesheet
         self.samples_data = self._read_samplesheet()
-        self.outputs = self._collect_outputs()
+        self.outputs = self._collect_outputs(use_old_output_files_mapping=use_old)
 
     def _read_samplesheet(self) -> dict:
         """
@@ -185,14 +197,20 @@ class Outputs:
                         "bam_tumor": "",
                         "bam_normal": "",
                     }
-                # Append the sample_id
+
+                # Append the sample_id, make sure the tumor sample id (status = 1)
+                # is always the first sample_id
+                status = row.get("status", "").strip()
                 sample_id = row.get("sample", "").strip()
                 if sample_id:
-                    patient_data[patient_id]["sample_ids"].append(sample_id)
+                    if status == "1" and patient_data[patient_id]["sample_ids"]:
+                        patient_data[patient_id]["sample_ids"].insert(0, sample_id)
+                    else:
+                        # Otherwise, append it
+                        patient_data[patient_id]["sample_ids"].append(sample_id)
                 
                 # Check for bam and status columns
                 bam = row.get("bam", "").strip()
-                status = row.get("status", "").strip()
                 if bam and status:
                     if status == "1":  # Tumor sample
                         patient_data[patient_id]["bam_tumor"] = bam
@@ -225,12 +243,18 @@ class Outputs:
                     process_prefix = os.path.dirname(pat)
                 # Build the search directory using the process prefix
                 search_dir = os.path.join(self.outputs_dir, process_prefix)
+                if key == "msisensorpro":
+                    # Special case for msisensorpro, which has patient in the filename
+                    search_dir = self.outputs_dir
                 search_pattern = os.path.join(search_dir, "**", "*")
                 for filepath in glob.glob(search_pattern, recursive=True):
-                    # Ensure the filepath contains the patient ID
-                    if record["patient_id"] not in filepath:
-                        continue
+                    # Ensure the filepath contains at least one of the sample IDs
+                    for sample_id in record.get("sample_ids", []):
+                        if sample_id not in filepath:
+                            continue
+
                     if re.search(pat, filepath):
+                        # record absolute path
                         record[key] = filepath
                         if pat.endswith("/"):
                             record[key] = os.path.dirname(filepath)
@@ -238,7 +262,7 @@ class Outputs:
                 if record.get(key):
                     break
 
-    def _collect_outputs(self, use_old_output_files_mapping = True) -> list:
+    def _collect_outputs(self, use_old_output_files_mapping = False) -> list:
         """
         For each patient_id from the samplesheet, scan the outputs directory to find files matching
         the regex patterns defined in OUTPUT_FILES_MAPPING. For each output key, use the value from
@@ -250,9 +274,7 @@ class Outputs:
             # Initialize with empty strings for all keys
             record = {key: "" for key in OUTPUT_KEYS}
             record["patient_id"] = patient_id
-            # use the first sample id for old mapping
-            if use_old_output_files_mapping:
-                record["patient_id"] = data.get("sample_ids", [patient_id])[0]
+            # use the sample id for old mapping
             record["sample_ids"] = data.get("sample_ids", [])
 
             # Overwrite with top-level keys where provided

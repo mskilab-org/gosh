@@ -3,8 +3,8 @@ import sys
 import json
 from .samplesheet import check_if_tumor_only
 
-def create_params_file(preset="default"):
-    default_input = "./samplesheet.csv"
+def create_params_file(preset="default", samplesheet="./samplesheet.csv"):
+    default_input = samplesheet
     default_outdir = "./results/"
     default_tools = "all"
     default_genome = "hg19"
@@ -12,21 +12,23 @@ def create_params_file(preset="default"):
 
     # Check if default input exists
     input_exists = os.path.exists(default_input)
-    input_status = "found!" if input_exists else "not found!"
 
     # Prompt for input
-    input_prompt = f"Enter input file path [{default_input} ({input_status})] (Press Enter to use default): "
-    input_path = input(input_prompt).strip()
-    if not input_path:
-        if input_exists:
-            input_path = default_input
-        else:
-            print("Error: You must provide a path to the samplesheet.")
-            sys.exit(1)
+    if input_exists:
+        print(f"Default input samplesheet found at: {default_input}")
     else:
-        if not os.path.exists(input_path):
-            print(f"Error: The provided input file '{input_path}' does not exist.")
-            sys.exit(1)
+        input_prompt = f"Enter samplesheet CSV file path (Press Enter to use default [./samplesheet.csv]): "
+        input_path = input(input_prompt).strip()
+        if not input_path:
+            if input_exists:
+                input_path = default_input
+            else:
+                print("Error: You must provide a path to the samplesheet.")
+                sys.exit(1)
+        else:
+            if not os.path.exists(input_path):
+                print(f"Error: The provided input file '{input_path}' does not exist.")
+                sys.exit(1)
 
     # Determine if tumor-only mode should be enabled
     try:

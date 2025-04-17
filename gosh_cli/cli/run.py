@@ -10,7 +10,10 @@ def run_cli():
 
 @run_cli.command()
 @click.option('--pipeline-dir',
-              help='Path to pipeline directory')
+              help='Path to nf-gos pipeline repo')
+@click.option('--samplesheet',
+              default='./samplesheet.csv',
+              help='Path to samplesheet CSV file')
 @click.option('--params-file',
               default='./params.json',
               help='Path to parameters JSON file')
@@ -25,7 +28,7 @@ def run_cli():
 @click.option('-s', '--samples',
               help='Comma-separated list of sample IDs to rerun')
 @click.option('--skip-tools',
-              help='Comma-separated list of tools (see available tools) to skip')
+              help='Comma-separated list of tools to skip (tools: aligner,bamqc,msisensorpro,gridss,amber,fragcounter,dryclean,cbs,sage,purple,jabba,non_integer_balance,lp_phased_balance,events,fusions,snpeff,snv_multiplicity,oncokb,signatures,hrdetect,,onenesstwoness)')
 @click.option('--preset',
               default='default',
               type=click.Choice(['default', 'jabba', 'hrd']),
@@ -34,6 +37,7 @@ def run_cli():
               help='OncoKB API key for accessing OncoKB annotations. Required if using OncoKB')
 def pipeline(
     pipeline_dir,
+    samplesheet,
     params_file,
     profile,
     resume,
@@ -71,7 +75,7 @@ def pipeline(
         if not path.isfile(default_params):
             print("No params.json file found. Launching wizard to create one...")
             # Call the wizard to create params.json with the preset supplied in the run command
-            create_params_file(preset=preset)
+            create_params_file(preset=preset, samplesheet=samplesheet)
             params_file = default_params
         else:
             params_file = default_params
@@ -103,6 +107,7 @@ def pipeline(
     # Print all parameters
     print("Running gOS with the following parameters:")
     print(f"Pipeline directory: {pipeline_dir}")
+    print(f"Samplesheet: {samplesheet}")
     print(f"Parameters file: {params_file}")
     print(f"Profile: {profile}")
     print(f"Resume: {resume}")
@@ -162,12 +167,14 @@ def pipeline(
                 names_str = ', '.join(sorted(names))
                 print(f"{names_str}, {workdir}")
 
-            confirm = input("Do you want to delete these directories? (yes/no): ").strip().lower()
+            confirm = input("Do you want to delete these directories? ([y]es/[n]o): ").strip().lower()
             if confirm == 'yes' or confirm == 'y':
-                confirm_again = input("Are you sure? This will cause the pipeline to rerun from these steps. (yes/no): ").strip().lower()
+                confirm_again = input("Are you sure? This will cause the pipeline to rerun from these steps. ([y]es/[n]o): ").strip().lower()
                 if confirm_again == 'yes' or confirm_again == 'y':
                     for workdir in workdirs_to_delete:
-                        rmtree(workdir)
+                        if workdir and path.exists(workdir):
+                            print(f"Deleting work directory: {workdir}")
+                            rmtree(workdir)
                     print("Directories deleted.")
                 else:
                     print("Run cancelled.")
@@ -200,14 +207,15 @@ def pipeline(
 
 @run_cli.command()
 @click.option('-p', '--pipeline-output-dir', required=True, type=click.Path(exists=True), help="Pipeline output directory")
-@click.option('-s', '--samplesheet', required=True, type=click.Path(exists=True), help="Path to the samplesheet CSV file")
+@click.option('-s', '--samplesheet', default='./samplesheet.csv', required=True, type=click.Path(exists=True), help="Path to the samplesheet CSV file")
+@click.option('--old', default=False, help="Whether to use the old outputs mapping (default: False)")
 @click.option('-o', '--output', default='./outputs.csv', type=click.Path(), help="CSV file to save outputs")
-def outputs(pipeline_output_dir, samplesheet, output):
+def outputs(pipeline_output_dir, samplesheet, output, old):
     """
     Instantiate an Outputs object with the provided pipeline output directory and samplesheet,
     and emit the outputs CSV.
     """
     from ..core.outputs import Outputs
-    outputs_obj = Outputs(pipeline_output_dir, samplesheet)
+    outputs_obj = Outputs(pipeline_output_dir, samplesheet, old)
     outputs_obj.emit_output_csv(output)
     click.echo(f"Outputs CSV generated at: {output}")
