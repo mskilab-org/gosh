@@ -1,6 +1,7 @@
 from os import makedirs, path
 from shutil import rmtree
 from sys import exit
+from subprocess import run, CalledProcessError
 import click
 
 @click.group(name='run')
@@ -206,7 +207,7 @@ def pipeline(
     runner.run(command)
 
 @run_cli.command()
-@click.option('-p', '--pipeline-output-dir', required=True, type=click.Path(exists=True), help="Pipeline output directory")
+@click.option('-p', '--pipeline-output-dir', required=True, type=click.Path(exists=True), help="Directory containing pipeline outputs")
 @click.option('-s', '--samplesheet', default='./samplesheet.csv', required=True, type=click.Path(exists=True), help="Path to the samplesheet CSV file")
 @click.option('--old', default=False, help="Whether to use the old outputs mapping (default: False)")
 @click.option('-o', '--output', default='./outputs.csv', type=click.Path(), help="CSV file to save outputs")
@@ -219,3 +220,56 @@ def outputs(pipeline_output_dir, samplesheet, output, old):
     outputs_obj = Outputs(pipeline_output_dir, samplesheet, old)
     outputs_obj.emit_output_csv(output)
     click.echo(f"Outputs CSV generated at: {output}")
+
+@run_cli.command()
+@click.option('-p', '--pipeline-output-dir', type=click.Path(exists=True), help="Directory containing pipeline outputs")
+@click.option('-s', '--samplesheet', type=click.Path(exists=True), help="Path to the samplesheet CSV file")
+@click.option('--old', default=False, help="Whether to use the old process_name/patient_id nf-gos outputs mapping (default: False)")
+@click.option('--output-csv', type=click.Path(exists=True), help="Path to the output CSV (if available).")
+@click.option('-t', '--cohort_type', type=click.Choice(['paired', 'tumor_only', 'heme']), default='paired', help='Type of the cohort.')
+@click.option('-o', '--gos_dir', type=click.Path(), required=True, help='Path to where the skilifted outputs should be deposited.')
+@click.option('-l', '--skilift-repo', type=click.Path(), default="~/git/skilift", help='Path to the skilift repo (default: ~/git/skilift)')
+@click.option('-c', '--cores', type=int, default=1, help='Number of cores to use.')
+def skilift(
+    cohort_type,
+    gos_dir,
+    skilift_repo,
+    cores,
+    output_csv=None,
+    pipeline_output_dir=None,
+    samplesheet=None,
+    old=False
+):
+    """Lift raw data into gOS compatible formats using Skilift."""
+    if not pipeline_output_dir and not output_csv:
+        click.echo("Error: Either --pipeline-output-dir or --output-csv must be provided.")
+        return
+
+    if not output_csv:
+        if not path.isfile(samplesheet):
+            click.echo(f"Error: The samplesheet '{samplesheet}' does not exist. Please provide a samplesheet with the -s option.")
+            return
+        if not path.isdir(pipeline_output_dir):
+            click.echo(f"Error: The directory '{pipeline_output_dir}' does not exist. Please provide a valid pipeline output directory with the -p option.")
+            return
+
+        output_csv = './outputs.csv'
+
+        from ..core.outputs import Outputs
+        outputs_obj = Outputs(pipeline_output_dir, samplesheet, old)
+        outputs_obj.emit_output_csv(output_csv)
+        click.echo(f"Outputs CSV generated at: {output_csv}")
+
+    makedirs(path.expanduser(gos_dir), exist_ok=True)
+
+    r_code = f'''
+    devtools::load_all("{path.expanduser(skilift_repo)}")
+    cohort <- Cohort$new("{output_csv}", cohort_type="{cohort_type}")
+    saveRDS(cohort, "{gos_dir}/cohort.rds")
+    lift_all(cohort, output_data_dir="{gos_dir}", cores={cores})
+    '''
+
+    try:
+        run(['Rscript', '-e', r_code], check=True)
+    except CalledProcessError as e:
+        click.echo(f"Error executing R script: {e}")

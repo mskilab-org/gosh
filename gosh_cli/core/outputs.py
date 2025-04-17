@@ -66,7 +66,7 @@ OUTPUT_FILES_MAPPING_OLD = {
     "qc_coverage_metrics": r"qc_metrics/picard/.*/.*coverage_metrics",
     "qc_coverage_metrics_tumor": r"qc_metrics/picard/tumor/.*/.*coverage_metrics",
     "qc_coverage_metrics_normal": r"qc_metrics/picard/normal/.*/.*coverage_metrics",
-    "msisensorpro": r"msisensorpro/.*_somatic$",
+    "msisensorpro": r"msisensorpro/.*_report$",
     "structural_variants": [
         r"sv_calling/gridss_somatic/.*/.*high_confidence_somatic\.vcf\.bgz$",
         r"tumor_only_junction_filter/.*/.*somatic\.filtered\.sv\.rds$"
@@ -121,7 +121,7 @@ OUTPUT_FILES_MAPPING = {
     "qc_coverage_metrics": r"picard_qc/.*/.*coverage_metrics",
     "qc_coverage_metrics_tumor": r"picard_qc/tumor/.*/.*coverage_metrics",
     "qc_coverage_metrics_normal": r"picard_qc/normal/.*/.*coverage_metrics",
-    "msisensorpro": r"msisensorpro/.*_somatic$",
+    "msisensorpro": r"msisensorpro/.*_report$",
     "structural_variants": [
         r"gridss/.*high_confidence_somatic\.vcf\.bgz$",
         r"tumor_only_junction_filter/.*/.*somatic\.filtered\.sv\.rds$"
