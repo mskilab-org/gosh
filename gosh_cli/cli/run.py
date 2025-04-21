@@ -15,6 +15,12 @@ def run_cli():
 @click.option('--samplesheet',
               default='./samplesheet.csv',
               help='Path to samplesheet CSV file')
+@click.option('-o', '--outdir',
+              default='./results/',
+              help='Path to pipeline outputs directory')
+@click.option('-r', '--reference',
+              default='hg19',
+              help='Genome reference version (hg19 or hg38)')
 @click.option('--params-file',
               default='./params.json',
               help='Path to parameters JSON file')
@@ -32,13 +38,15 @@ def run_cli():
               help='Comma-separated list of tools to skip (tools: aligner,bamqc,msisensorpro,gridss,amber,fragcounter,dryclean,cbs,sage,purple,jabba,non_integer_balance,lp_phased_balance,events,fusions,snpeff,snv_multiplicity,oncokb,signatures,hrdetect,,onenesstwoness)')
 @click.option('--preset',
               default='default',
-              type=click.Choice(['default', 'jabba', 'hrd']),
-              help='Preset option: "default" (all tools), "jabba", or "hrd"')
+              type=click.Choice(['default', 'jabba', 'hrd', 'heme']),
+              help='Preset option: "default" (all tools), "jabba", "hrd", or "heme"')
 @click.option('--oncokb-api-key',
               help='OncoKB API key for accessing OncoKB annotations. Required if using OncoKB')
 def pipeline(
     pipeline_dir,
     samplesheet,
+    outdir,
+    reference,
     params_file,
     profile,
     resume,
@@ -66,7 +74,7 @@ def pipeline(
         profile = f"{profile},{env_defaults['profile']}"
 
     # Create hg19 directory (required for fragcounter)
-    makedirs('hg19', exist_ok=True)
+    makedirs(reference, exist_ok=True)
 
     # Check if params_file is provided and exists
     if not path.isfile(params_file):
@@ -76,7 +84,12 @@ def pipeline(
         if not path.isfile(default_params):
             print("No params.json file found. Launching wizard to create one...")
             # Call the wizard to create params.json with the preset supplied in the run command
-            create_params_file(preset=preset, samplesheet=samplesheet)
+            create_params_file(
+                preset=preset,
+                samplesheet=samplesheet,
+                outdir=outdir,
+                genome=reference
+            )
             params_file = default_params
         else:
             params_file = default_params
@@ -87,6 +100,8 @@ def pipeline(
             skip_tools_value = "sage,snpeff,snv_multiplicity,signatures,hrdetect"
         elif preset == 'hrd':
             skip_tools_value = "non_integer_balance,lp_phased_balance,events,fusions"
+        elif preset == 'heme':
+            skip_tools_value = "msisensorpro,hrdetect,onenesstwoness"
     else:
         skip_tools_value = skip_tools if skip_tools else None
 
@@ -98,11 +113,12 @@ def pipeline(
         with open(params_file, "w") as pf:
             json.dump(params_data, pf, indent=4)
 
+    oncokb_api_key = oncokb_api_key or env_defaults.get('ONCOKB_API_KEY', None)
     if skip_tools_value is not None and 'oncokb' not in skip_tools_value and not oncokb_api_key:
-        print("OncoKB API key is required for accessing OncoKB annotations. Please provide it using the --oncokb-api-key flag.")
+        print("OncoKB API key is required for accessing OncoKB annotations. Please provide it using the --oncokb-api-key flag or set ONCOKB_API_KEY in your environment.")
         exit(1)
     elif not oncokb_api_key:
-        print("OncoKB API key is required for accessing OncoKB annotations. Please provide it using the --oncokb-api-key flag.")
+        print("OncoKB API key is required for accessing OncoKB annotations. Please provide it using the --oncokb-api-key flag or set ONCOKB_API_KEY in your environment.")
         exit(1)
 
     # Print all parameters

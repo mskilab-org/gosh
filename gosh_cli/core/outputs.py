@@ -28,6 +28,7 @@ OUTPUT_KEYS = [
     "snvs_germline",
     "het_pileups",
     "amber_dir",
+    "cobalt_dir",
     "purple_pp_range",
     "purple_pp_best_fit",
     "purity",
@@ -66,10 +67,10 @@ OUTPUT_FILES_MAPPING_OLD = {
     "qc_coverage_metrics": r"qc_metrics/picard/.*/.*coverage_metrics",
     "qc_coverage_metrics_tumor": r"qc_metrics/picard/tumor/.*/.*coverage_metrics",
     "qc_coverage_metrics_normal": r"qc_metrics/picard/normal/.*/.*coverage_metrics",
-    "msisensorpro": r"msisensorpro/.*_report$",
+    "msisensorpro": r"msisensorpro/.*(?<!_dis)(?<!_somatic)(?<!_germline)$",
     "structural_variants": [
         r"sv_calling/gridss_somatic/.*/.*high_confidence_somatic\.vcf\.bgz$",
-        r"tumor_only_junction_filter/.*/.*somatic\.filtered\.sv\.rds$"
+        r"sv_calling/tumor_only_junction_filter/.*/somatic\.filtered\.sv\.rds$"
     ],
     "structural_variants_unfiltered": r"sv_calling/gridss/.*/.*\.gridss\.filtered\.vcf\.gz$",
     "coverage_tumor": r"coverage/dryclean_tumor/.*/drycleaned\.cov\.rds$",
@@ -84,6 +85,7 @@ OUTPUT_FILES_MAPPING_OLD = {
         r"hetpileups/.*/sites\.txt$",
     ],
     "amber_dir": r"amber/.*/amber/",
+    "cobalt_dir": r"cobalt/.*/cobalt/",
     "purple_pp_range": r"purple/.*/.*purple\.purity\.range\.tsv$",
     "purple_pp_best_fit": r"purple/.*/.*purple\.purity\.tsv$",
     "seg": r"cbs/.*/seg.rds",
@@ -124,7 +126,7 @@ OUTPUT_FILES_MAPPING = {
     "msisensorpro": r"msisensorpro/.*_report$",
     "structural_variants": [
         r"gridss/.*high_confidence_somatic\.vcf\.bgz$",
-        r"tumor_only_junction_filter/.*/.*somatic\.filtered\.sv\.rds$"
+        r"tumor_only_junction_filter/.*/somatic\.filtered\.sv\.rds$"
     ],
     "structural_variants_unfiltered": r"gridss.*/.*\.gridss\.filtered\.vcf\.gz$",
     "coverage_tumor": r"dryclean/tumor/drycleaned\.cov\.rds$",
@@ -136,6 +138,7 @@ OUTPUT_FILES_MAPPING = {
     "snvs_germline": r"sage/germline/.*sage\.germline\.vcf\.gz$",
     "het_pileups": r"amber/sites\.txt$",
     "amber_dir": r"amber/amber/",
+    "cobalt_dir": r"cobalt/cobalt/",
     "purple_pp_range": r"purple/.*purple\.purity\.range\.tsv$",
     "purple_pp_best_fit": r"purple/.*purple\.purity\.tsv$",
     "seg": r"cbs/seg.rds",
@@ -247,20 +250,29 @@ class Outputs:
                     # Special case for msisensorpro, which has patient in the filename
                     search_dir = self.outputs_dir
                 search_pattern = os.path.join(search_dir, "**", "*")
-                for filepath in glob.glob(search_pattern, recursive=True):
-                    # Ensure the filepath contains at least one of the sample IDs
-                    for sample_id in record.get("sample_ids", []):
-                        if sample_id not in filepath:
-                            continue
 
-                    if re.search(pat, filepath):
-                        # record absolute path
-                        record[key] = filepath
-                        if pat.endswith("/"):
-                            record[key] = os.path.dirname(filepath)
+                for root, dirs, files in os.walk(search_dir):
+                    # Remove 'work' from dirs to prevent os.walk from traversing it
+                    if 'work' in dirs and os.path.samefile(os.path.join(root, 'work'), 
+                                                           os.path.join(search_dir, 'work')):
+                        dirs.remove('work')
+
+                    # Process files in the current directory
+                    for file in files:
+                        filepath = os.path.join(root, file)
+
+                        for sample_id in record.get("sample_ids", []):
+                            if sample_id not in filepath:
+                                continue
+
+                        if re.search(pat, filepath):
+                            # record absolute path
+                            record[key] = filepath
+                            if pat.endswith("/"):
+                                record[key] = os.path.dirname(filepath)
+                            break
+                    if record.get(key):
                         break
-                if record.get(key):
-                    break
 
     def _collect_outputs(self, use_old_output_files_mapping = False) -> list:
         """

@@ -3,11 +3,20 @@ import sys
 import json
 from .samplesheet import check_if_tumor_only
 
-def create_params_file(preset="default", samplesheet="./samplesheet.csv"):
+genome_map = {
+    'hg19': 'GATK.GRCh37',
+    'hg38': 'GATK.GRCh38'
+}
+def create_params_file(
+    preset="default",
+    samplesheet="./samplesheet.csv",
+    outdir="./results/",
+    genome="hg19",
+):
     default_input = samplesheet
-    default_outdir = "./results/"
+    default_outdir = outdir
     default_tools = "all"
-    default_genome = "hg19"
+    default_genome = genome_map[genome]
     default_email = "example_email@gmail.com"
 
     # Check if default input exists
@@ -44,15 +53,20 @@ def create_params_file(preset="default", samplesheet="./samplesheet.csv"):
     outdir_status = "found!" if outdir_exists else "not found!"
 
     # Prompt for outdir
-    outdir_prompt = f"Enter output directory [default: {default_outdir} ({outdir_status})] (Press Enter to use default): "
-    outdir = input(outdir_prompt).strip() or default_outdir
+    if outdir_status == "found!":
+        print(f"Default output directory found at: {default_outdir}")
+    else:
+        outdir_prompt = f"Enter output directory [default: {default_outdir} ({outdir_status})] (Press Enter to use default): "
+        outdir = input(outdir_prompt).strip() or default_outdir
 
     # New preset based configuration.
     presets = {
         "default": "",
         "jabba": "sage,snpeff,snv_multiplicity,signatures,hrdetect",
-        "hrd": "non_integer_balance,lp_phased_balance,events,fusions"
+        "hrd": "non_integer_balance,lp_phased_balance,events,fusions",
+        "heme": "msisensorpro,hrdetect,onenesstwoness"
     }
+
     if preset != "default":
         print(f"Preset automatically set to '{preset}'")
         preset_used = preset
@@ -62,7 +76,8 @@ def create_params_file(preset="default", samplesheet="./samplesheet.csv"):
             " - default (recommended): runs all tools; aligner, bamqc, gridss, amber, fragcounter, dryclean, cbs, sage, purple, jabba, non_integer_balance, lp_phased_balance, events, fusions, snpeff, snv_multiplicity, signatures, hrdetect \n"
             " - jabba: runs all tools necessary for JaBbA outputs (skips tools: sage, snpeff, snv_multiplicity, signatures, hrdetect)\n"
             " - hrd: runs HR deficiency pipeline (skips tools: non_integer_balance, lp_phased_balance, events, fusions)\n"
-            "Enter preset option (options: default, jabba, hrd): "
+            " - heme: runs heme pipeline (skips tools: msisensorpro, hrdetect, onenesstwoness)\n"
+            "Enter preset option (options: default, jabba, hrd, heme): "
         )
         preset_used = input(preset_prompt).strip().lower() or "default"
         if preset_used not in presets:
@@ -70,13 +85,14 @@ def create_params_file(preset="default", samplesheet="./samplesheet.csv"):
             preset_used = "default"
 
     # Prompt for genome
-    genome_prompt = (
-        f"Enter genome [default: {default_genome}] (options: hg19, hg38) (Press Enter to use default): "
-    )
-    genome_input = input(genome_prompt).strip() or default_genome
-    genome_map = {'hg19': 'GATK.GRCh37', 'hg38': 'GATK.GRCh38'}
-    genome = genome_map.get(genome_input.lower())
-    if not genome:
+    if not genome in genome_map.values():
+        genome_prompt = (
+            f"Enter genome [default: {default_genome}] (options: hg19, hg38) (Press Enter to use default): "
+        )
+        genome_input = input(genome_prompt).strip() or default_genome
+        genome = genome_map.get(genome_input.lower())
+
+    if not genome == "GATK.GRCh37" and not genome == "GATK.GRCh38":
         print(f"Warning: Invalid genome '{genome_input}'. Using default '{default_genome}'.")
         genome = genome_map[default_genome]
 
