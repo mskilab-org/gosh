@@ -25,6 +25,7 @@ def create_params_file(
     # Prompt for input
     if input_exists:
         print(f"Default input samplesheet found at: {default_input}")
+        input_path = default_input
     else:
         input_prompt = f"Enter samplesheet CSV file path (Press Enter to use default [./samplesheet.csv]): "
         input_path = input(input_prompt).strip()
@@ -87,9 +88,9 @@ def create_params_file(
     # Prompt for genome
     if not genome in genome_map.values():
         genome_prompt = (
-            f"Enter genome [default: {default_genome}] (options: hg19, hg38) (Press Enter to use default): "
+            f"Enter genome [default: hg19] (options: hg19, hg38) (Press Enter to use default): "
         )
-        genome_input = input(genome_prompt).strip() or default_genome
+        genome_input = input(genome_prompt).strip() or "hg19"
         genome = genome_map.get(genome_input.lower())
 
     if not genome == "GATK.GRCh37" and not genome == "GATK.GRCh38":
