@@ -225,17 +225,24 @@ def pipeline(
 @run_cli.command()
 @click.option('-p', '--pipeline-output-dir', required=True, type=click.Path(exists=True), help="Directory containing pipeline outputs")
 @click.option('-s', '--samplesheet', default='./samplesheet.csv', required=True, type=click.Path(exists=True), help="Path to the samplesheet CSV file")
+@click.option('-e', '--emit', default='outputs', help="Whether to emit outputs.csv (for skilifting) or samplesheet.csv (for pipeline run). Options: 'outputs' or 'samplesheet'")
 @click.option('--old', default=False, help="Whether to use the old outputs mapping (default: False)")
 @click.option('-o', '--output', default='./outputs.csv', type=click.Path(), help="CSV file to save outputs")
-def outputs(pipeline_output_dir, samplesheet, output, old):
+def outputs(pipeline_output_dir, samplesheet, emit, output, old):
     """
     Instantiate an Outputs object with the provided pipeline output directory and samplesheet,
     and emit the outputs CSV.
     """
     from ..core.outputs import Outputs
     outputs_obj = Outputs(pipeline_output_dir, samplesheet, old)
-    outputs_obj.emit_output_csv(output)
-    click.echo(f"Outputs CSV generated at: {output}")
+    if emit == 'samplesheet':
+        if output == './outputs.csv':
+            output = './new_samplesheet.csv'
+        outputs_obj.emit_samplesheet_csv(output)
+        click.echo(f"Samplesheet CSV generated at: {output}")
+    else:
+        outputs_obj.emit_output_csv(output)
+        click.echo(f"Outputs CSV generated at: {output}")
 
 @run_cli.command()
 @click.option('-p', '--pipeline-output-dir', type=click.Path(exists=True), help="Directory containing pipeline outputs")

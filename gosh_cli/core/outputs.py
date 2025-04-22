@@ -22,7 +22,10 @@ OUTPUT_KEYS = [
     "msisensorpro",
     "structural_variants",
     "structural_variants_unfiltered",
+    "frag_cov_tumor",
+    "frag_cov_normal",
     "coverage_tumor",
+    "coverage_normal",
     "snvs_somatic",
     "snvs_somatic_unfiltered",
     "snvs_germline",
@@ -37,6 +40,8 @@ OUTPUT_KEYS = [
     "nseg",
     "variant_annotations_somatic",
     "variant_annotations_germline",
+    "variant_annotations_somatic_vcf",
+    "variant_annotations_germline_vcf",
     "karyograph",
     "jabba_rds",
     "jabba_gg",
@@ -67,13 +72,16 @@ OUTPUT_FILES_MAPPING_OLD = {
     "qc_coverage_metrics": r"qc_metrics/picard/.*/.*coverage_metrics",
     "qc_coverage_metrics_tumor": r"qc_metrics/picard/tumor/.*/.*coverage_metrics",
     "qc_coverage_metrics_normal": r"qc_metrics/picard/normal/.*/.*coverage_metrics",
-    "msisensorpro": r"msisensorpro/.*(?<!_dis)(?<!_somatic)(?<!_germline)$",
+    "msisensorpro": r"msisensorpro/.*(?<!_dis)(?<!_somatic)(?<!_germline)(?<!\.list)$",
     "structural_variants": [
         r"sv_calling/gridss_somatic/.*/.*high_confidence_somatic\.vcf\.bgz$",
         r"sv_calling/tumor_only_junction_filter/.*/somatic\.filtered\.sv\.rds$"
     ],
     "structural_variants_unfiltered": r"sv_calling/gridss/.*/.*\.gridss\.filtered\.vcf\.gz$",
+    "frag_cov_tumor": r"coverage/fragcounter_tumor/.*/cov\.rds$",
+    "frag_cov_normal": r"coverage/fragcounter_normal/.*/cov\.rds$",
     "coverage_tumor": r"coverage/dryclean_tumor/.*/drycleaned\.cov\.rds$",
+    "coverage_normal": r"coverage/dryclean_normal/.*/drycleaned\.cov\.rds$",
     "snvs_somatic": [
         r"snv_calling/sage/somatic/.*/.*\.sage\.pass_filtered\.vcf\.gz$",
         r"snv_calling/sage/somatic/tumor_only_filter/.*/.*\.sage\.pass_filtered\.tumoronly\.vcf\.gz$",
@@ -95,6 +103,8 @@ OUTPUT_FILES_MAPPING_OLD = {
     "multiplicity_hetsnps": r"snv_multiplicity/.*/.*est_snv_cn_hets\.rds$",
     "variant_annotations_somatic": r"variant_annotations/snpeff/somatic/.*/.*ann\.bcf$",
     "variant_annotations_germline": r"variant_annotations/snpeff/germline/.*/.*ann\.bcf$",
+    "variant_annotations_somatic_vcf": r"variant_annotations/snpeff/somatic/.*/.*ann\.vcf$",
+    "variant_annotations_germline_vcf": r"variant_annotations/snpeff/germline/.*/.*ann\.vcf$",
     "oncokb_snv": r"oncokb/.*/merged_oncokb\.maf$",
     "oncokb_cna": r"oncokb/.*/merged_oncokb_cna\.tsv$",
     "oncokb_fusions": r"oncokb/.*/merged_oncokb_fusions\.tsv$",
@@ -129,7 +139,10 @@ OUTPUT_FILES_MAPPING = {
         r"tumor_only_junction_filter/.*/somatic\.filtered\.sv\.rds$"
     ],
     "structural_variants_unfiltered": r"gridss.*/.*\.gridss\.filtered\.vcf\.gz$",
+    "frag_cov_tumor": r"fragcounter/tumor/cov\.rds$",
+    "frag_cov_normal": r"fragcounter/normal/cov\.rds$",
     "coverage_tumor": r"dryclean/tumor/drycleaned\.cov\.rds$",
+    "coverage_normal": r"dryclean/normal/drycleaned\.cov\.rds$",
     "snvs_somatic": [
         r"sage/somatic/.*\.sage\.pass_filtered\.vcf\.gz$",
         r"sage/somatic/tumor_only_filter/.*\.sage\.pass_filtered\.tumoronly\.vcf\.gz$",
@@ -148,6 +161,8 @@ OUTPUT_FILES_MAPPING = {
     "multiplicity_hetsnps": r"snv_multiplicity/.*est_snv_cn_hets\.rds$",
     "variant_annotations_somatic": r"snpeff/somatic/.*ann\.bcf$",
     "variant_annotations_germline": r"snpeff/germline/.*ann\.bcf$",
+    "variant_annotations_somatic_vcf": r"snpeff/somatic/.*ann\.vcf$",
+    "variant_annotations_germline_vcf": r"snpeff/germline/.*ann\.vcf$",
     "oncokb_snv": r"oncokb/merged_oncokb\.maf$",
     "oncokb_cna": r"oncokb/merged_oncokb_cna\.tsv$",
     "oncokb_fusions": r"oncokb/merged_oncokb_fusions\.tsv$",
@@ -205,7 +220,7 @@ class Outputs:
                 # is always the first sample_id
                 status = row.get("status", "").strip()
                 sample_id = row.get("sample", "").strip()
-                if sample_id:
+                if sample_id and sample_id not in patient_data[patient_id]["sample_ids"]:
                     if status == "1" and patient_data[patient_id]["sample_ids"]:
                         patient_data[patient_id]["sample_ids"].insert(0, sample_id)
                     else:
@@ -348,3 +363,179 @@ class Outputs:
             for row in self.outputs:
                 # Construct a row excluding 'sample_ids'
                 writer.writerow({key: row.get(key, "") for key in fieldnames})
+
+    def emit_samplesheet_csv(self, csv_path: str):
+        """
+        Write a tall samplesheet CSV where every row corresponds to one sample.
+        For paired samples, a row is written for the tumor (status "1", bam, frag_cov, dryclean_cov from bam_tumor, frag_cov_tumor, coverage_tumor)
+        and another for the normal (status "0", bam, frag_cov, dryclean_cov from bam_normal, frag_cov_normal, coverage_normal).
+        Other fields are copied directly from the record (they come from the original samplesheet or outputs).
+        The mapping from the output record keys to the samplesheet columns is defined as follows:
+
+            samplesheet_col     -> outputs key (or conditional):
+            patient             -> patient_id
+            sample              -> sample_ids (single value)
+            status              -> "1" for tumor, "0" for normal
+            sex                 -> sex
+            bam                 -> bam_tumor (if tumor) or bam_normal (if normal)
+            msi                 -> msisensorpro
+            hets                -> het_pileups
+            amber_dir           -> amber_dir
+            frag_cov            -> frag_cov_tumor (if tumor) or frag_cov_normal (if normal)
+            dryclean_cov        -> coverage_tumor (if tumor) or coverage_normal (if normal)
+            cobalt_dir          -> cobalt_dir
+            purity              -> purity
+            ploidy              -> ploidy
+            seg                 -> seg
+            nseg                -> nseg
+            vcf                 -> structural_variants
+            jabba_rds           -> jabba_rds
+            jabba_gg            -> jabba_gg
+            ni_balanced_gg      -> jabba_gg_balanced
+            lp_balanced_gg      -> jabba_gg_allelic
+            events              -> events
+            fusions             -> fusions
+            snv_somatic_vcf     -> snvs_somatic
+            snv_germline_vcf    -> snvs_germline
+            variant_somatic_ann -> variant_annotations_somatic_vcf
+            variant_somatic_bcf -> variant_annotations_somatic
+            variant_germline_ann-> variant_annotations_germline_vcf
+            variant_germline_bcf-> variant_annotations_germline
+            snv_multiplicity    -> multiplicity
+            oncokb_maf          -> oncokb_snv
+            oncokb_fusions      -> oncokb_fusions
+            oncokb_cna          -> oncokb_cna
+            sbs_signatures      -> signatures_activities_sbs
+            indel_signatures    -> signatures_activities_indel
+            signatures_matrix   -> signatures_matrix_sbs
+            hrdetect            -> hrdetect
+            onenesstwoness      -> onenesstwoness
+
+        Rows are generated by inspecting each record in self.outputs.
+        If both bam_tumor and bam_normal are present, two rows are emitted
+        (the first sample in sample_ids corresponds to tumor and the second to normal).
+        If only one BAM is available, only a single row is emitted.
+        """
+        import csv
+
+        fieldnames = [
+            "patient", "sample", "status", "sex", "bam", "msi", "hets", "amber_dir",
+            "frag_cov", "dryclean_cov", "cobalt_dir", "purity", "ploidy", "seg", "nseg",
+            "vcf", "jabba_rds", "jabba_gg", "ni_balanced_gg", "lp_balanced_gg",
+            "events", "fusions", "snv_somatic_vcf", "snv_germline_vcf",
+            "variant_somatic_ann", "variant_somatic_bcf",
+            "variant_germline_ann", "variant_germline_bcf", "snv_multiplicity",
+            "oncokb_maf", "oncokb_fusions", "oncokb_cna", "sbs_signatures",
+            "indel_signatures", "signatures_matrix", "hrdetect", "onenesstwoness"
+        ]
+
+        with open(csv_path, "w", newline="") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for record in self.outputs:
+                sample_rows = []
+                # Check if the samplesheet indicates a paired sample (tumor and normal provided)
+                if len(record.get("sample_ids", [])) >= 2:
+                    print(f"Found paired sample for patient {record['patient_id']}, {record['sample_ids']}")
+                    # Tumor row (status "1")
+                    tumor_sample = record["sample_ids"][0] if record["sample_ids"] else ""
+                    tumor_row = {
+                        "patient": record.get("patient_id", ""),
+                        "sample": tumor_sample,
+                        "status": "1",
+                        "sex": record.get("sex", ""),
+                        "bam": record.get("bam_tumor", ""),
+                        "msi": record.get("msisensorpro", ""),
+                        "hets": record.get("het_pileups", ""),
+                        "amber_dir": record.get("amber_dir", ""),
+                        "frag_cov": record.get("frag_cov_tumor", ""),
+                        "dryclean_cov": record.get("coverage_tumor", ""),
+                        "cobalt_dir": record.get("cobalt_dir", ""),
+                        "purity": record.get("purity", ""),
+                        "ploidy": record.get("ploidy", ""),
+                        "seg": record.get("seg", ""),
+                        "nseg": record.get("nseg", ""),
+                        "vcf": record.get("structural_variants", ""),
+                        "jabba_rds": record.get("jabba_rds", ""),
+                        "jabba_gg": record.get("jabba_gg", ""),
+                        "ni_balanced_gg": record.get("jabba_gg_balanced", ""),
+                        "lp_balanced_gg": record.get("jabba_gg_allelic", ""),
+                        "events": record.get("events", ""),
+                        "fusions": record.get("fusions", ""),
+                        "snv_somatic_vcf": record.get("snvs_somatic", ""),
+                        "snv_germline_vcf": record.get("snvs_germline", ""),
+                        "variant_somatic_ann": record.get("variant_annotations_somatic_vcf", ""),
+                        "variant_somatic_bcf": record.get("variant_annotations_somatic", ""),
+                        "variant_germline_ann": record.get("variant_annotations_germline_vcf", ""),
+                        "variant_germline_bcf": record.get("variant_annotations_germline", ""),
+                        "snv_multiplicity": record.get("multiplicity", ""),
+                        "oncokb_maf": record.get("oncokb_snv", ""),
+                        "oncokb_fusions": record.get("oncokb_fusions", ""),
+                        "oncokb_cna": record.get("oncokb_cna", ""),
+                        "sbs_signatures": record.get("signatures_activities_sbs", ""),
+                        "indel_signatures": record.get("signatures_activities_indel", ""),
+                        "signatures_matrix": record.get("signatures_matrix_sbs", ""),
+                        "hrdetect": record.get("hrdetect", ""),
+                        "onenesstwoness": record.get("onenesstwoness", "")
+                    }
+                    sample_rows.append(tumor_row)
+
+                    # Normal row (status "0"): second sample in sample_ids if available
+                    normal_sample = record["sample_ids"][1] if len(record["sample_ids"]) >= 2 else ""
+                    normal_row = tumor_row.copy()
+                    normal_row["sample"] = normal_sample
+                    normal_row["status"] = "0"
+                    normal_row["bam"] = record.get("bam_normal", "")
+                    normal_row["frag_cov"] = record.get("frag_cov_normal", "")
+                    normal_row["dryclean_cov"] = record.get("coverage_normal", "")
+                    sample_rows.append(normal_row)
+                else:
+                    status = "1"
+                    bam_val = record.get("bam_tumor", "")
+                    frag_cov = record.get("frag_cov_tumor", "")
+                    dryclean_cov = record.get("coverage_tumor", "")
+
+                    sample_val = record["sample_ids"][0] if record["sample_ids"] else ""
+                    sample_rows.append({
+                        "patient": record.get("patient_id", ""),
+                        "sample": sample_val,
+                        "status": status,
+                        "sex": record.get("sex", ""),
+                        "bam": bam_val,
+                        "msi": record.get("msisensorpro", ""),
+                        "hets": record.get("het_pileups", ""),
+                        "amber_dir": record.get("amber_dir", ""),
+                        "frag_cov": frag_cov,
+                        "dryclean_cov": dryclean_cov,
+                        "cobalt_dir": record.get("cobalt_dir", ""),
+                        "purity": record.get("purity", ""),
+                        "ploidy": record.get("ploidy", ""),
+                        "seg": record.get("seg", ""),
+                        "nseg": record.get("nseg", ""),
+                        "vcf": record.get("structural_variants", ""),
+                        "jabba_rds": record.get("jabba_rds", ""),
+                        "jabba_gg": record.get("jabba_gg", ""),
+                        "ni_balanced_gg": record.get("jabba_gg_balanced", ""),
+                        "lp_balanced_gg": record.get("jabba_gg_allelic", ""),
+                        "events": record.get("events", ""),
+                        "fusions": record.get("fusions", ""),
+                        "snv_somatic_vcf": record.get("snvs_somatic", ""),
+                        "snv_germline_vcf": record.get("snvs_germline", ""),
+                        "variant_somatic_ann": record.get("variant_annotations_somatic_vcf", ""),
+                        "variant_somatic_bcf": record.get("variant_annotations_somatic", ""),
+                        "variant_germline_ann": record.get("variant_annotations_germline_vcf", ""),
+                        "variant_germline_bcf": record.get("variant_annotations_germline", ""),
+                        "snv_multiplicity": record.get("multiplicity", ""),
+                        "oncokb_maf": record.get("oncokb_snv", ""),
+                        "oncokb_fusions": record.get("oncokb_fusions", ""),
+                        "oncokb_cna": record.get("oncokb_cna", ""),
+                        "sbs_signatures": record.get("signatures_activities_sbs", ""),
+                        "indel_signatures": record.get("signatures_activities_indel", ""),
+                        "signatures_matrix": record.get("signatures_matrix_sbs", ""),
+                        "hrdetect": record.get("hrdetect", ""),
+                        "onenesstwoness": record.get("onenesstwoness", "")
+                    })
+
+                for row in sample_rows:
+                    writer.writerow(row)
