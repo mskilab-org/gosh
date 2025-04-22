@@ -1,6 +1,7 @@
 from os import makedirs, path
 from shutil import rmtree
 from sys import exit
+from subprocess import run, CalledProcessError
 import click
 
 @click.group(name='run')
@@ -14,6 +15,12 @@ def run_cli():
 @click.option('--samplesheet',
               default='./samplesheet.csv',
               help='Path to samplesheet CSV file')
+@click.option('-o', '--outdir',
+              default='./results/',
+              help='Path to pipeline outputs directory')
+@click.option('-r', '--reference',
+              default='hg19',
+              help='Genome reference version (hg19 or hg38)')
 @click.option('--params-file',
               default='./params.json',
               help='Path to parameters JSON file')
@@ -31,13 +38,15 @@ def run_cli():
               help='Comma-separated list of tools to skip (tools: aligner,bamqc,msisensorpro,gridss,amber,fragcounter,dryclean,cbs,sage,purple,jabba,non_integer_balance,lp_phased_balance,events,fusions,snpeff,snv_multiplicity,oncokb,signatures,hrdetect,,onenesstwoness)')
 @click.option('--preset',
               default='default',
-              type=click.Choice(['default', 'jabba', 'hrd']),
-              help='Preset option: "default" (all tools), "jabba", or "hrd"')
+              type=click.Choice(['default', 'jabba', 'hrd', 'heme']),
+              help='Preset option: "default" (all tools), "jabba", "hrd", or "heme"')
 @click.option('--oncokb-api-key',
               help='OncoKB API key for accessing OncoKB annotations. Required if using OncoKB')
 def pipeline(
     pipeline_dir,
     samplesheet,
+    outdir,
+    reference,
     params_file,
     profile,
     resume,
@@ -65,7 +74,7 @@ def pipeline(
         profile = f"{profile},{env_defaults['profile']}"
 
     # Create hg19 directory (required for fragcounter)
-    makedirs('hg19', exist_ok=True)
+    makedirs(reference, exist_ok=True)
 
     # Check if params_file is provided and exists
     if not path.isfile(params_file):
@@ -75,7 +84,12 @@ def pipeline(
         if not path.isfile(default_params):
             print("No params.json file found. Launching wizard to create one...")
             # Call the wizard to create params.json with the preset supplied in the run command
-            create_params_file(preset=preset, samplesheet=samplesheet)
+            create_params_file(
+                preset=preset,
+                samplesheet=samplesheet,
+                outdir=outdir,
+                genome=reference
+            )
             params_file = default_params
         else:
             params_file = default_params
@@ -86,6 +100,8 @@ def pipeline(
             skip_tools_value = "sage,snpeff,snv_multiplicity,signatures,hrdetect"
         elif preset == 'hrd':
             skip_tools_value = "non_integer_balance,lp_phased_balance,events,fusions"
+        elif preset == 'heme':
+            skip_tools_value = "msisensorpro,hrdetect,onenesstwoness"
     else:
         skip_tools_value = skip_tools if skip_tools else None
 
@@ -97,11 +113,12 @@ def pipeline(
         with open(params_file, "w") as pf:
             json.dump(params_data, pf, indent=4)
 
+    oncokb_api_key = oncokb_api_key or env_defaults.get('ONCOKB_API_KEY', None)
     if skip_tools_value is not None and 'oncokb' not in skip_tools_value and not oncokb_api_key:
-        print("OncoKB API key is required for accessing OncoKB annotations. Please provide it using the --oncokb-api-key flag.")
+        print("OncoKB API key is required for accessing OncoKB annotations. Please provide it using the --oncokb-api-key flag or set ONCOKB_API_KEY in your environment.")
         exit(1)
     elif not oncokb_api_key:
-        print("OncoKB API key is required for accessing OncoKB annotations. Please provide it using the --oncokb-api-key flag.")
+        print("OncoKB API key is required for accessing OncoKB annotations. Please provide it using the --oncokb-api-key flag or set ONCOKB_API_KEY in your environment.")
         exit(1)
 
     # Print all parameters
@@ -207,16 +224,76 @@ def pipeline(
     runner.run(command)
 
 @run_cli.command()
-@click.option('-p', '--pipeline-output-dir', required=True, type=click.Path(exists=True), help="Pipeline output directory")
+@click.option('-p', '--pipeline-output-dir', required=True, type=click.Path(exists=True), help="Directory containing pipeline outputs")
 @click.option('-s', '--samplesheet', default='./samplesheet.csv', required=True, type=click.Path(exists=True), help="Path to the samplesheet CSV file")
+@click.option('-e', '--emit', default='outputs', help="Whether to emit outputs.csv (for skilifting) or samplesheet.csv (for pipeline run). Options: 'outputs' or 'samplesheet'")
 @click.option('--old', default=False, help="Whether to use the old outputs mapping (default: False)")
 @click.option('-o', '--output', default='./outputs.csv', type=click.Path(), help="CSV file to save outputs")
-def outputs(pipeline_output_dir, samplesheet, output, old):
+def outputs(pipeline_output_dir, samplesheet, emit, output, old):
     """
     Instantiate an Outputs object with the provided pipeline output directory and samplesheet,
     and emit the outputs CSV.
     """
     from ..core.outputs import Outputs
     outputs_obj = Outputs(pipeline_output_dir, samplesheet, old)
-    outputs_obj.emit_output_csv(output)
-    click.echo(f"Outputs CSV generated at: {output}")
+    if emit == 'samplesheet':
+        if output == './outputs.csv':
+            output = './new_samplesheet.csv'
+        outputs_obj.emit_samplesheet_csv(output)
+        click.echo(f"Samplesheet CSV generated at: {output}")
+    else:
+        outputs_obj.emit_output_csv(output)
+        click.echo(f"Outputs CSV generated at: {output}")
+
+@run_cli.command()
+@click.option('-p', '--pipeline-output-dir', type=click.Path(exists=True), help="Directory containing pipeline outputs")
+@click.option('-s', '--samplesheet', type=click.Path(exists=True), help="Path to the samplesheet CSV file")
+@click.option('--old', default=False, help="Whether to use the old process_name/patient_id nf-gos outputs mapping (default: False)")
+@click.option('--output-csv', type=click.Path(exists=True), help="Path to the output CSV (if available).")
+@click.option('-t', '--cohort_type', type=click.Choice(['paired', 'tumor_only', 'heme']), default='paired', help='Type of the cohort.')
+@click.option('-o', '--gos_dir', type=click.Path(), required=True, help='Path to where the skilifted outputs should be deposited.')
+@click.option('-l', '--skilift-repo', type=click.Path(), default="~/git/skilift", help='Path to the skilift repo (default: ~/git/skilift)')
+@click.option('-c', '--cores', type=int, default=1, help='Number of cores to use.')
+def skilift(
+    cohort_type,
+    gos_dir,
+    skilift_repo,
+    cores,
+    output_csv=None,
+    pipeline_output_dir=None,
+    samplesheet=None,
+    old=False
+):
+    """Lift raw data into gOS compatible formats using Skilift."""
+    if not pipeline_output_dir and not output_csv:
+        click.echo("Error: Either --pipeline-output-dir or --output-csv must be provided.")
+        return
+
+    if not output_csv:
+        if not path.isfile(samplesheet):
+            click.echo(f"Error: The samplesheet '{samplesheet}' does not exist. Please provide a samplesheet with the -s option.")
+            return
+        if not path.isdir(pipeline_output_dir):
+            click.echo(f"Error: The directory '{pipeline_output_dir}' does not exist. Please provide a valid pipeline output directory with the -p option.")
+            return
+
+        output_csv = './outputs.csv'
+
+        from ..core.outputs import Outputs
+        outputs_obj = Outputs(pipeline_output_dir, samplesheet, old)
+        outputs_obj.emit_output_csv(output_csv)
+        click.echo(f"Outputs CSV generated at: {output_csv}")
+
+    makedirs(path.expanduser(gos_dir), exist_ok=True)
+
+    r_code = f'''
+    devtools::load_all("{path.expanduser(skilift_repo)}")
+    cohort <- Cohort$new("{output_csv}", cohort_type="{cohort_type}")
+    saveRDS(cohort, "{gos_dir}/cohort.rds")
+    lift_all(cohort, output_data_dir="{gos_dir}", cores={cores})
+    '''
+
+    try:
+        run(['Rscript', '-e', r_code], check=True)
+    except CalledProcessError as e:
+        click.echo(f"Error executing R script: {e}")

@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='gosh-cli',
-    version='0.1.1',
+    version='0.1.4',
     description='gOSh - gOS sHell: A CLI tool for the nf-gOS pipeline',
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
