@@ -25,6 +25,7 @@ def create_params_file(
     # Prompt for input
     if input_exists:
         print(f"Default input samplesheet found at: {default_input}")
+        input_path = default_input
     else:
         input_prompt = f"Enter samplesheet CSV file path (Press Enter to use default [./samplesheet.csv]): "
         input_path = input(input_prompt).strip()
