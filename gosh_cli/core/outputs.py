@@ -276,16 +276,19 @@ class Outputs:
                     for file in files:
                         filepath = os.path.join(root, file)
 
+                        is_matching_sample = False
                         for sample_id in record.get("sample_ids", []):
-                            if sample_id not in filepath:
-                                continue
+                            if sample_id in filepath:
+                                is_matching_sample = True
+                                break
 
-                        if re.search(pat, filepath):
-                            # record absolute path
-                            record[key] = filepath
-                            if pat.endswith("/"):
-                                record[key] = os.path.dirname(filepath)
-                            break
+                        if is_matching_sample:
+                            if re.search(pat, filepath):
+                                # record absolute path
+                                record[key] = filepath
+                                if pat.endswith("/"):
+                                    record[key] = os.path.dirname(filepath)
+                                break
                     if record.get(key):
                         break
 
