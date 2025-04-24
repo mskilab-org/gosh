@@ -264,6 +264,24 @@ def skilift(
     old=False
 ):
     """Lift raw data into gOS compatible formats using Skilift."""
+    from os import path
+    import subprocess
+
+    # Expand the skilift_repo path
+    skilift_repo = path.expanduser(skilift_repo)
+    if not path.isdir(skilift_repo):
+        if click.confirm(f"Skilift repository not found at {skilift_repo}. Would you like to clone it?", default=True):
+            clone_url = "https://github.com/mskilab-org/skilift.git"
+            click.echo(f"Cloning skilift from {clone_url} to {skilift_repo} ...")
+            try:
+                subprocess.run(["git", "clone", clone_url, skilift_repo], check=True)
+            except Exception as err:
+                click.echo(f"Error cloning skilift repository: {err}")
+                return
+        else:
+            click.echo("Skilift repository is required. Exiting.")
+            return
+
     if not pipeline_output_dir and not output_csv:
         click.echo("Error: Either --pipeline-output-dir or --output-csv must be provided.")
         return
