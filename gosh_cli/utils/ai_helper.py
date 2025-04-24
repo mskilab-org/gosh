@@ -4,6 +4,22 @@ import json
 from typing import List
 from openai import OpenAI
 
+
+WORKDIR_ERROR_INTERPRETER_PROMPT = """You are a Nextflow pipeline debugging expert. Your task is to
+analyze the workdir for potential errors by reviewing the contents of the '.command.log' file, the
+'.command.sh' file, and the list of all files present in the work directory.
+
+The provided information includes:
+1. The '.command.log' file which contains error logs.
+2. The '.command.sh' file which shows the exact commands executed.
+3. A list of all files in the directory that may highlight missing or misnamed files.
+
+Using the above information, identify possible causes of failure in the pipeline execution, determine
+which component might have failed, and suggest actionable, technical steps to resolve the issue. 
+
+If there are no errors in the workdir, simply state that the workdir appears to be functioning correctly.
+"""
+
 ERROR_INTERPRETER_PROMPT = """You are a Nextflow pipeline debugging expert. Your task is to analyze the provided error messages and:
 1. Identify the root cause of the error
 2. Determine which part of the pipeline failed and for which sample name
@@ -26,7 +42,10 @@ ERROR_ADVISOR_PROMPT = """You are a bioinformatics workflow expert specializing 
 2. Provide practical solutions that the user can implement
 3. If relevant, explain any pipeline-specific considerations
 4. If needed, recommend configuration changes or system requirements
-Keep suggestions actionable and direct. Focus on practical solutions rather than theoretical explanations."""
+Keep suggestions actionable and direct. Focus on practical solutions rather than theoretical explanations.
+
+If there were no errors, simply state that the pipeline appears to be functioning correctly.
+"""
 
 # Read the help context from 'help_context.txt' in the script's directory
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -209,6 +228,71 @@ def get_error_analysis_and_solution(error_messages: str) -> str:
 
     except Exception as e:
         raise Exception(f"Failed to complete error analysis chain: {str(e)}")
+
+
+def get_workdir_analysis_and_solution(work_dir: str) -> str:
+    """
+    Analyze the work directory by reading the .command.log and .command.sh files,
+    listing all files in the directory, and then querying the AI for a combined error
+    interpretation and recommended solution.
+
+    Args:
+        work_dir (str): Path to the work directory
+
+    Returns:
+        str: Combined AI analysis and solution.
+    """
+    import os
+
+    # Build paths for the .command.log and .command.sh files
+    command_log_path = os.path.join(work_dir, ".command.log")
+    command_sh_path = os.path.join(work_dir, ".command.sh")
+
+    # Read contents of the files using the existing read_log_file function
+    try:
+        command_log_content = read_log_file(command_log_path)
+    except Exception as e:
+        command_log_content = f"Error reading .command.log: {str(e)}"
+
+    try:
+        command_sh_content = read_log_file(command_sh_path)
+    except Exception as e:
+        command_sh_content = f"Error reading .command.sh: {str(e)}"
+
+    # Get a list of all files in the work directory
+    try:
+        files_list = os.listdir(work_dir)
+        files_list_str = "\n".join(files_list)
+    except Exception as e:
+        files_list_str = f"Error listing files in workdir: {str(e)}"
+
+    # Compose a combined query string containing all the gathered information
+    query = f"""Workdir Analysis:
+
+.command.log content:
+{command_log_content}
+
+.command.sh content:
+{command_sh_content}
+
+List of files in the work directory:
+{files_list_str}
+"""
+    # First query: get interpretation using the workdir-specific prompt
+    analysis = query_ai(query, system_prompt=WORKDIR_ERROR_INTERPRETER_PROMPT)
+
+    # Second query: get recommendations using the existing ERROR_ADVISOR_PROMPT
+    solution = query_ai(analysis, system_prompt=ERROR_ADVISOR_PROMPT)
+
+    # Combine and return the responses
+    combined_response = f"""
+WORKDIR ERROR INTERPRETATION:
+{analysis}
+
+RECOMMENDED SOLUTION:
+{solution}
+"""
+    return combined_response
 
 def extract_new_params(response: str) -> dict:
     """
