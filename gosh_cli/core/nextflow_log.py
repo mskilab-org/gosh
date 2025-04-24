@@ -1,7 +1,9 @@
 import logging
+import csv
 
 logging.basicConfig(level=logging.WARNING)
 
+# All field names:
 # FIELD_NAMES = [
 #     'attempt', 'complete', 'container', 'cpus', 'disk', 'duration', 'env', 'error_action',
 #     'exit', 'hash', 'hostname', 'inv_ctxt', 'log', 'memory', 'module', 'name', 'native_id',
@@ -22,7 +24,6 @@ def run_nextflow_log(args):
         text=True,
     )
     if result.returncode != 0:
-        # print(result)
         raise RuntimeError(f"Error running nextflow log: {result.stderr}")
     return result.stdout
 
@@ -32,8 +33,6 @@ def get_all_run_names():
     env_defaults = get_environment_defaults()
     if shutil.which('nextflow') is None:
         nextflow_module = env_defaults.get('nextflow_module', 'nextflow')
-        # Error out if nextflow is not found
-        # in the error message use the nextflow_module variable if it is set
         if nextflow_module:
             raise RuntimeError(f"Nextflow command not found. Load the module '{nextflow_module}' to use Nextflow.")
         else:
@@ -99,3 +98,20 @@ def parse_log_output(output):
         entry = dict(zip(FIELD_NAMES, values))
         entries.append(entry)
     return entries
+
+def write_cache(entries, cache_file):
+    """
+    Write a list of log entry dictionaries to a CSV cache file.
+    """
+    with open(cache_file, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=FIELD_NAMES)
+        writer.writeheader()
+        writer.writerows(entries)
+
+def read_cache(cache_file):
+    """
+    Read log entry dictionaries from a CSV cache file.
+    """
+    with open(cache_file, 'r', newline='') as csvfile:
+        reader = csv.DictReader(csvfile)
+        return list(reader)
