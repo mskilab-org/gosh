@@ -200,6 +200,48 @@ class Outputs:
         patient_data = {}
         with open(self.samplesheet, newline='') as csvfile:
             reader = csv.DictReader(csvfile)
+
+            # Maps for columns that need to be split by status (tumor "1" vs normal "0")
+            conditional_mapping = {
+                "frag_cov": ("frag_cov_tumor", "frag_cov_normal"),
+                "dryclean_cov": ("coverage_tumor", "coverage_normal"),
+            }
+
+            # Maps for columns that map directly (samplesheet column -> Outputs key)
+            direct_mapping = {
+                "sex": "sex",
+                "msi": "msisensorpro",
+                "hets": "het_pileups",
+                "amber_dir": "amber_dir",
+                "cobalt_dir": "cobalt_dir",
+                "purity": "purity",
+                "ploidy": "ploidy",
+                "seg": "seg",
+                "nseg": "nseg",
+                "vcf": "structural_variants",
+                "jabba_rds": "jabba_rds",
+                "jabba_gg": "jabba_gg",
+                "ni_balanced_gg": "jabba_gg_balanced",
+                "lp_balanced_gg": "jabba_gg_allelic",
+                "events": "events",
+                "fusions": "fusions",
+                "snv_somatic_vcf": "snvs_somatic",
+                "snv_germline_vcf": "snvs_germline",
+                "variant_somatic_ann": "variant_annotations_somatic_vcf",
+                "variant_somatic_bcf": "variant_annotations_somatic",
+                "variant_germline_ann": "variant_annotations_germline_vcf",
+                "variant_germline_bcf": "variant_annotations_germline",
+                "snv_multiplicity": "multiplicity",
+                "oncokb_maf": "oncokb_snv",
+                "oncokb_fusions": "oncokb_fusions",
+                "oncokb_cna": "oncokb_cna",
+                "sbs_signatures": "signatures_activities_sbs",
+                "indel_signatures": "signatures_activities_indel",
+                "signatures_matrix": "signatures_matrix_sbs",
+                "hrdetect": "hrdetect",
+                "onenesstwoness": "onenesstwoness",
+            }
+
             for row in reader:
                 patient_id = row.get("patient", "").strip()
                 if not patient_id:
@@ -216,18 +258,14 @@ class Outputs:
                         "bam_normal": "",
                     }
 
-                # Append the sample_id, make sure the tumor sample id (status = 1)
-                # is always the first sample_id
                 status = row.get("status", "").strip()
                 sample_id = row.get("sample", "").strip()
                 if sample_id and sample_id not in patient_data[patient_id]["sample_ids"]:
                     if status == "1" and patient_data[patient_id]["sample_ids"]:
                         patient_data[patient_id]["sample_ids"].insert(0, sample_id)
                     else:
-                        # Otherwise, append it
                         patient_data[patient_id]["sample_ids"].append(sample_id)
-                
-                # Check for bam and status columns
+
                 bam = row.get("bam", "").strip()
                 if bam and status:
                     if status == "1":  # Tumor sample
@@ -235,15 +273,29 @@ class Outputs:
                     elif status == "0":  # Normal sample
                         patient_data[patient_id]["bam_normal"] = bam
 
-                # For every key defined in OUTPUT_KEYS (besides patient_id and sample_ids),
-                # if the row contains that column, store it (prefer this over any output file)
-                for key in OUTPUT_KEYS:
-                    if key in ("patient_id", "sample_ids"):
+                # Process all other columns from the samplesheet row
+                for col, value in row.items():
+                    value = value.strip() if value else ""
+                    if not value or col in ["patient", "sample", "status", "bam"]:
                         continue
-                    if row.get(key):
-                        if key in ("tumor_type", "disease", "primary_site", "sex"):
-                            # Store these keys directly at the top level
-                            patient_data[patient_id][key] = row[key].strip()
+
+                    if col in conditional_mapping:
+                        # Assign to tumor or normal key based on status
+                        out_key = conditional_mapping[col][0] if status == "1" else (
+                                  conditional_mapping[col][1] if status == "0" else None)
+                        if out_key and not patient_data[patient_id].get(out_key):
+                            patient_data[patient_id][out_key] = value
+
+                    elif col in direct_mapping:
+                        out_key = direct_mapping[col]
+                        if not patient_data[patient_id].get(out_key):
+                            patient_data[patient_id][out_key] = value
+
+                    else:
+                        # For any other columns not explicitly mapped, store them using the original column name.
+                        if col not in patient_data[patient_id]:
+                            patient_data[patient_id][col] = value
+
         return patient_data
 
     def _apply_old_mapping(self, record: dict) -> None:
@@ -308,11 +360,8 @@ class Outputs:
             record["sample_ids"] = data.get("sample_ids", [])
 
             # Overwrite with top-level keys where provided
-            metadata_keys = ["tumor_type", "disease", "primary_site", "sex", "bam_tumor", "bam_normal"]
-
-            for key in metadata_keys:
-                if key in data:
-                    record[key] = data[key]
+            for key in data.keys():
+                record[key] = data[key]
 
             if use_old_output_files_mapping:
                 self._apply_old_mapping(record)
