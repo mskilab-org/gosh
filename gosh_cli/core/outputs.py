@@ -136,7 +136,8 @@ OUTPUT_FILES_MAPPING = {
     "msisensorpro": r"msisensorpro/.*_report$",
     "structural_variants": [
         r"gridss/.*high_confidence_somatic\.vcf\.bgz$",
-        r"tumor_only_junction_filter/.*/somatic\.filtered\.sv\.rds$"
+        r"tumor_only_junction_filter/.*/somatic\.filtered\.sv\.rds$",
+        r"gridss/.*/somatic\.filtered\.sv\.rds$",
     ],
     "structural_variants_unfiltered": r"gridss.*/.*\.gridss\.filtered\.vcf\.gz$",
     "frag_cov_tumor": r"fragcounter/tumor/cov\.rds$",
