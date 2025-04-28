@@ -7,11 +7,19 @@ def help_cli():
     pass
 
 @help_cli.command()
-@click.argument('query', type=str)
-def ask(query):
+@click.option('-w', '--workdir', type=click.Path(exists=True), help="Work directory for error analysis")
+@click.argument('query', type=str, required=False)
+def ask(query, workdir):
     """Ask gosh a question about the nf-gOS pipeline"""
-    from gosh.utils.ai_helper import answer_help_question, extract_new_params
+    from ..utils.ai_helper import answer_help_question, extract_new_params, get_workdir_analysis_and_solution
+    if workdir:
+        response = get_workdir_analysis_and_solution(workdir)
+        click.echo(response)
+        return
+
     try:
+        if not query:
+            query = click.prompt("Please enter your question about the nf-gOS pipeline")
         response = answer_help_question(query)
         click.echo("𓅃: " + response)
         # Try to extract new_params.json from the response

@@ -2,6 +2,8 @@ import os
 import re
 import glob
 import csv
+import sys
+from typing import Optional, List
 
 # Define the output keys (modify in one place if needed)
 OUTPUT_KEYS = [
@@ -64,6 +66,19 @@ OUTPUT_KEYS = [
     "hrdetect",
     "onenesstwoness",
 ]
+
+# Define the default samplesheet columns
+SAMPLESHEET_FIELDNAMES = [
+    "patient", "sample", "status", "sex", "bam", "msi", "hets", "amber_dir",
+    "frag_cov", "dryclean_cov", "cobalt_dir", "purity", "ploidy", "seg", "nseg",
+    "vcf", "jabba_rds", "jabba_gg", "ni_balanced_gg", "lp_balanced_gg",
+    "events", "fusions", "snv_somatic_vcf", "snv_germline_vcf",
+    "variant_somatic_ann", "variant_somatic_bcf",
+    "variant_germline_ann", "variant_germline_bcf", "snv_multiplicity",
+    "oncokb_maf", "oncokb_fusions", "oncokb_cna", "sbs_signatures",
+    "indel_signatures", "signatures_matrix", "hrdetect", "onenesstwoness"
+]
+
 
 OUTPUT_FILES_MAPPING_OLD = {
     "qc_dup_rate": r"qc_metrics/gatk/.*/.*metrics",
@@ -201,6 +216,48 @@ class Outputs:
         patient_data = {}
         with open(self.samplesheet, newline='') as csvfile:
             reader = csv.DictReader(csvfile)
+
+            # Maps for columns that need to be split by status (tumor "1" vs normal "0")
+            conditional_mapping = {
+                "frag_cov": ("frag_cov_tumor", "frag_cov_normal"),
+                "dryclean_cov": ("coverage_tumor", "coverage_normal"),
+            }
+
+            # Maps for columns that map directly (samplesheet column -> Outputs key)
+            direct_mapping = {
+                "sex": "sex",
+                "msi": "msisensorpro",
+                "hets": "het_pileups",
+                "amber_dir": "amber_dir",
+                "cobalt_dir": "cobalt_dir",
+                "purity": "purity",
+                "ploidy": "ploidy",
+                "seg": "seg",
+                "nseg": "nseg",
+                "vcf": "structural_variants",
+                "jabba_rds": "jabba_rds",
+                "jabba_gg": "jabba_gg",
+                "ni_balanced_gg": "jabba_gg_balanced",
+                "lp_balanced_gg": "jabba_gg_allelic",
+                "events": "events",
+                "fusions": "fusions",
+                "snv_somatic_vcf": "snvs_somatic",
+                "snv_germline_vcf": "snvs_germline",
+                "variant_somatic_ann": "variant_annotations_somatic_vcf",
+                "variant_somatic_bcf": "variant_annotations_somatic",
+                "variant_germline_ann": "variant_annotations_germline_vcf",
+                "variant_germline_bcf": "variant_annotations_germline",
+                "snv_multiplicity": "multiplicity",
+                "oncokb_maf": "oncokb_snv",
+                "oncokb_fusions": "oncokb_fusions",
+                "oncokb_cna": "oncokb_cna",
+                "sbs_signatures": "signatures_activities_sbs",
+                "indel_signatures": "signatures_activities_indel",
+                "signatures_matrix": "signatures_matrix_sbs",
+                "hrdetect": "hrdetect",
+                "onenesstwoness": "onenesstwoness",
+            }
+
             for row in reader:
                 patient_id = row.get("patient", "").strip()
                 if not patient_id:
@@ -217,18 +274,14 @@ class Outputs:
                         "bam_normal": "",
                     }
 
-                # Append the sample_id, make sure the tumor sample id (status = 1)
-                # is always the first sample_id
                 status = row.get("status", "").strip()
                 sample_id = row.get("sample", "").strip()
                 if sample_id and sample_id not in patient_data[patient_id]["sample_ids"]:
                     if status == "1" and patient_data[patient_id]["sample_ids"]:
                         patient_data[patient_id]["sample_ids"].insert(0, sample_id)
                     else:
-                        # Otherwise, append it
                         patient_data[patient_id]["sample_ids"].append(sample_id)
-                
-                # Check for bam and status columns
+
                 bam = row.get("bam", "").strip()
                 if bam and status:
                     if status == "1":  # Tumor sample
@@ -236,15 +289,29 @@ class Outputs:
                     elif status == "0":  # Normal sample
                         patient_data[patient_id]["bam_normal"] = bam
 
-                # For every key defined in OUTPUT_KEYS (besides patient_id and sample_ids),
-                # if the row contains that column, store it (prefer this over any output file)
-                for key in OUTPUT_KEYS:
-                    if key in ("patient_id", "sample_ids"):
+                # Process all other columns from the samplesheet row
+                for col, value in row.items():
+                    value = value.strip() if value else ""
+                    if not value or col in ["patient", "sample", "status", "bam"]:
                         continue
-                    if row.get(key):
-                        if key in ("tumor_type", "disease", "primary_site", "sex"):
-                            # Store these keys directly at the top level
-                            patient_data[patient_id][key] = row[key].strip()
+
+                    if col in conditional_mapping:
+                        # Assign to tumor or normal key based on status
+                        out_key = conditional_mapping[col][0] if status == "1" else (
+                                  conditional_mapping[col][1] if status == "0" else None)
+                        if out_key and not patient_data[patient_id].get(out_key):
+                            patient_data[patient_id][out_key] = value
+
+                    elif col in direct_mapping:
+                        out_key = direct_mapping[col]
+                        if not patient_data[patient_id].get(out_key):
+                            patient_data[patient_id][out_key] = value
+
+                    else:
+                        # For any other columns not explicitly mapped, store them using the original column name.
+                        if col not in patient_data[patient_id]:
+                            patient_data[patient_id][col] = value
+
         return patient_data
 
     def _apply_old_mapping(self, record: dict) -> None:
@@ -309,11 +376,8 @@ class Outputs:
             record["sample_ids"] = data.get("sample_ids", [])
 
             # Overwrite with top-level keys where provided
-            metadata_keys = ["tumor_type", "disease", "primary_site", "sex", "bam_tumor", "bam_normal"]
-
-            for key in metadata_keys:
-                if key in data:
-                    record[key] = data[key]
+            for key in data.keys():
+                record[key] = data[key]
 
             if use_old_output_files_mapping:
                 self._apply_old_mapping(record)
@@ -353,24 +417,50 @@ class Outputs:
             outputs_list.append(record)
         return outputs_list
 
-    def emit_output_csv(self, csv_path: str):
+    def emit_output_csv(self, csv_path: Optional[str] = None,
+                        include_columns: Optional[List[str]] = None,
+                        exclude_columns: Optional[List[str]] = None):
         """
         Write the collected outputs (self.outputs) to a CSV file at csv_path.
-        The CSV should include all keys except 'sample_ids' (to preserve one-to-one mapping).
+        The CSV includes keys from OUTPUT_KEYS except 'sample_ids'.
+        Columns can be filtered using include_columns or exclude_columns.
         For any missing values, output an empty string.
         """
-        # Fields for CSV omit 'sample_ids'
-        fieldnames = [key for key in OUTPUT_KEYS if key != "sample_ids"]
-        with open(csv_path, "w", newline="") as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            for row in self.outputs:
-                # Construct a row excluding 'sample_ids'
-                writer.writerow({key: row.get(key, "") for key in fieldnames})
+        base_fieldnames = [key for key in OUTPUT_KEYS if key != "sample_ids"]
 
-    def emit_samplesheet_csv(self, csv_path: str):
+        if include_columns:
+            # Filter base_fieldnames, maintaining the order of include_columns if they exist in base
+            included_set = set(include_columns)
+            fieldnames = [col for col in base_fieldnames if col in included_set]
+            # Ensure the order matches include_columns for columns present in base_fieldnames
+            fieldnames.sort(key=lambda col: include_columns.index(col) if col in include_columns else float('inf'))
+        elif exclude_columns:
+            excluded_set = set(exclude_columns)
+            fieldnames = [col for col in base_fieldnames if col not in excluded_set]
+        else:
+            fieldnames = base_fieldnames
+
+        if not fieldnames:
+            print("Error: No columns selected for output.", file=sys.stderr)
+            return
+
+        if csv_path:
+            output_stream = open(csv_path, "w", newline="")
+        else:
+            output_stream = sys.stdout
+        writer = csv.DictWriter(output_stream, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in self.outputs:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
+        if csv_path:
+            output_stream.close()
+
+    def emit_samplesheet_csv(self, csv_path: Optional[str] = None,
+                             include_columns: Optional[List[str]] = None,
+                             exclude_columns: Optional[List[str]] = None):
         """
         Write a tall samplesheet CSV where every row corresponds to one sample.
+        Columns can be filtered using include_columns or exclude_columns.
         For paired samples, a row is written for the tumor (status "1", bam, frag_cov, dryclean_cov from bam_tumor, frag_cov_tumor, coverage_tumor)
         and another for the normal (status "0", bam, frag_cov, dryclean_cov from bam_normal, frag_cov_normal, coverage_normal).
         Other fields are copied directly from the record (they come from the original samplesheet or outputs).
@@ -420,126 +510,137 @@ class Outputs:
         (the first sample in sample_ids corresponds to tumor and the second to normal).
         If only one BAM is available, only a single row is emitted.
         """
-        import csv
+        base_fieldnames = SAMPLESHEET_FIELDNAMES
 
-        fieldnames = [
-            "patient", "sample", "status", "sex", "bam", "msi", "hets", "amber_dir",
-            "frag_cov", "dryclean_cov", "cobalt_dir", "purity", "ploidy", "seg", "nseg",
-            "vcf", "jabba_rds", "jabba_gg", "ni_balanced_gg", "lp_balanced_gg",
-            "events", "fusions", "snv_somatic_vcf", "snv_germline_vcf",
-            "variant_somatic_ann", "variant_somatic_bcf",
-            "variant_germline_ann", "variant_germline_bcf", "snv_multiplicity",
-            "oncokb_maf", "oncokb_fusions", "oncokb_cna", "sbs_signatures",
-            "indel_signatures", "signatures_matrix", "hrdetect", "onenesstwoness"
-        ]
+        if include_columns:
+            # Filter base_fieldnames, maintaining the order of include_columns if they exist in base
+            included_set = set(include_columns)
+            fieldnames = [col for col in base_fieldnames if col in included_set]
+             # Ensure the order matches include_columns for columns present in base_fieldnames
+            fieldnames.sort(key=lambda col: include_columns.index(col) if col in include_columns else float('inf'))
+        elif exclude_columns:
+            excluded_set = set(exclude_columns)
+            fieldnames = [col for col in base_fieldnames if col not in excluded_set]
+        else:
+            fieldnames = base_fieldnames
 
-        with open(csv_path, "w", newline="") as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
+        if not fieldnames:
+            print("Error: No columns selected for output.", file=sys.stderr)
+            return
 
-            for record in self.outputs:
-                sample_rows = []
-                # Check if the samplesheet indicates a paired sample (tumor and normal provided)
-                if len(record.get("sample_ids", [])) >= 2:
-                    print(f"Found paired sample for patient {record['patient_id']}, {record['sample_ids']}")
-                    # Tumor row (status "1")
-                    tumor_sample = record["sample_ids"][0] if record["sample_ids"] else ""
-                    tumor_row = {
-                        "patient": record.get("patient_id", ""),
-                        "sample": tumor_sample,
-                        "status": "1",
-                        "sex": record.get("sex", ""),
-                        "bam": record.get("bam_tumor", ""),
-                        "msi": record.get("msisensorpro", ""),
-                        "hets": record.get("het_pileups", ""),
-                        "amber_dir": record.get("amber_dir", ""),
-                        "frag_cov": record.get("frag_cov_tumor", ""),
-                        "dryclean_cov": record.get("coverage_tumor", ""),
-                        "cobalt_dir": record.get("cobalt_dir", ""),
-                        "purity": record.get("purity", ""),
-                        "ploidy": record.get("ploidy", ""),
-                        "seg": record.get("seg", ""),
-                        "nseg": record.get("nseg", ""),
-                        "vcf": record.get("structural_variants", ""),
-                        "jabba_rds": record.get("jabba_rds", ""),
-                        "jabba_gg": record.get("jabba_gg", ""),
-                        "ni_balanced_gg": record.get("jabba_gg_balanced", ""),
-                        "lp_balanced_gg": record.get("jabba_gg_allelic", ""),
-                        "events": record.get("events", ""),
-                        "fusions": record.get("fusions", ""),
-                        "snv_somatic_vcf": record.get("snvs_somatic", ""),
-                        "snv_germline_vcf": record.get("snvs_germline", ""),
-                        "variant_somatic_ann": record.get("variant_annotations_somatic_vcf", ""),
-                        "variant_somatic_bcf": record.get("variant_annotations_somatic", ""),
-                        "variant_germline_ann": record.get("variant_annotations_germline_vcf", ""),
-                        "variant_germline_bcf": record.get("variant_annotations_germline", ""),
-                        "snv_multiplicity": record.get("multiplicity", ""),
-                        "oncokb_maf": record.get("oncokb_snv", ""),
-                        "oncokb_fusions": record.get("oncokb_fusions", ""),
-                        "oncokb_cna": record.get("oncokb_cna", ""),
-                        "sbs_signatures": record.get("signatures_activities_sbs", ""),
-                        "indel_signatures": record.get("signatures_activities_indel", ""),
-                        "signatures_matrix": record.get("signatures_matrix_sbs", ""),
-                        "hrdetect": record.get("hrdetect", ""),
-                        "onenesstwoness": record.get("onenesstwoness", "")
-                    }
-                    sample_rows.append(tumor_row)
+        if csv_path:
+            output_stream = open(csv_path, "w", newline="")
+        else:
+            output_stream = sys.stdout
+        writer = csv.DictWriter(output_stream, fieldnames=fieldnames)
+        writer.writeheader()
 
-                    # Normal row (status "0"): second sample in sample_ids if available
-                    normal_sample = record["sample_ids"][1] if len(record["sample_ids"]) >= 2 else ""
-                    normal_row = tumor_row.copy()
-                    normal_row["sample"] = normal_sample
-                    normal_row["status"] = "0"
-                    normal_row["bam"] = record.get("bam_normal", "")
-                    normal_row["frag_cov"] = record.get("frag_cov_normal", "")
-                    normal_row["dryclean_cov"] = record.get("coverage_normal", "")
-                    sample_rows.append(normal_row)
-                else:
-                    status = "1"
-                    bam_val = record.get("bam_tumor", "")
-                    frag_cov = record.get("frag_cov_tumor", "")
-                    dryclean_cov = record.get("coverage_tumor", "")
+        for record in self.outputs:
+            sample_rows = []
+            if len(record.get("sample_ids", [])) >= 2:
+                print(f"Found paired sample for patient {record['patient_id']}, {record['sample_ids']}")
+                # Tumor row (status "1")
+                tumor_sample = record["sample_ids"][0] if record["sample_ids"] else ""
+                tumor_row = {
+                    "patient": record.get("patient_id", ""),
+                    "sample": tumor_sample,
+                    "status": "1",
+                    "sex": record.get("sex", ""),
+                    "bam": record.get("bam_tumor", ""),
+                    "msi": record.get("msisensorpro", ""),
+                    "hets": record.get("het_pileups", ""),
+                    "amber_dir": record.get("amber_dir", ""),
+                    "frag_cov": record.get("frag_cov_tumor", ""),
+                    "dryclean_cov": record.get("coverage_tumor", ""),
+                    "cobalt_dir": record.get("cobalt_dir", ""),
+                    "purity": record.get("purity", ""),
+                    "ploidy": record.get("ploidy", ""),
+                    "seg": record.get("seg", ""),
+                    "nseg": record.get("nseg", ""),
+                    "vcf": record.get("structural_variants", ""),
+                    "jabba_rds": record.get("jabba_rds", ""),
+                    "jabba_gg": record.get("jabba_gg", ""),
+                    "ni_balanced_gg": record.get("jabba_gg_balanced", ""),
+                    "lp_balanced_gg": record.get("jabba_gg_allelic", ""),
+                    "events": record.get("events", ""),
+                    "fusions": record.get("fusions", ""),
+                    "snv_somatic_vcf": record.get("snvs_somatic", ""),
+                    "snv_germline_vcf": record.get("snvs_germline", ""),
+                    "variant_somatic_ann": record.get("variant_annotations_somatic_vcf", ""),
+                    "variant_somatic_bcf": record.get("variant_annotations_somatic", ""),
+                    "variant_germline_ann": record.get("variant_annotations_germline_vcf", ""),
+                    "variant_germline_bcf": record.get("variant_annotations_germline", ""),
+                    "snv_multiplicity": record.get("multiplicity", ""),
+                    "oncokb_maf": record.get("oncokb_snv", ""),
+                    "oncokb_fusions": record.get("oncokb_fusions", ""),
+                    "oncokb_cna": record.get("oncokb_cna", ""),
+                    "sbs_signatures": record.get("signatures_activities_sbs", ""),
+                    "indel_signatures": record.get("signatures_activities_indel", ""),
+                    "signatures_matrix": record.get("signatures_matrix_sbs", ""),
+                    "hrdetect": record.get("hrdetect", ""),
+                    "onenesstwoness": record.get("onenesstwoness", "")
+                }
+                sample_rows.append(tumor_row)
 
-                    sample_val = record["sample_ids"][0] if record["sample_ids"] else ""
-                    sample_rows.append({
-                        "patient": record.get("patient_id", ""),
-                        "sample": sample_val,
-                        "status": status,
-                        "sex": record.get("sex", ""),
-                        "bam": bam_val,
-                        "msi": record.get("msisensorpro", ""),
-                        "hets": record.get("het_pileups", ""),
-                        "amber_dir": record.get("amber_dir", ""),
-                        "frag_cov": frag_cov,
-                        "dryclean_cov": dryclean_cov,
-                        "cobalt_dir": record.get("cobalt_dir", ""),
-                        "purity": record.get("purity", ""),
-                        "ploidy": record.get("ploidy", ""),
-                        "seg": record.get("seg", ""),
-                        "nseg": record.get("nseg", ""),
-                        "vcf": record.get("structural_variants", ""),
-                        "jabba_rds": record.get("jabba_rds", ""),
-                        "jabba_gg": record.get("jabba_gg", ""),
-                        "ni_balanced_gg": record.get("jabba_gg_balanced", ""),
-                        "lp_balanced_gg": record.get("jabba_gg_allelic", ""),
-                        "events": record.get("events", ""),
-                        "fusions": record.get("fusions", ""),
-                        "snv_somatic_vcf": record.get("snvs_somatic", ""),
-                        "snv_germline_vcf": record.get("snvs_germline", ""),
-                        "variant_somatic_ann": record.get("variant_annotations_somatic_vcf", ""),
-                        "variant_somatic_bcf": record.get("variant_annotations_somatic", ""),
-                        "variant_germline_ann": record.get("variant_annotations_germline_vcf", ""),
-                        "variant_germline_bcf": record.get("variant_annotations_germline", ""),
-                        "snv_multiplicity": record.get("multiplicity", ""),
-                        "oncokb_maf": record.get("oncokb_snv", ""),
-                        "oncokb_fusions": record.get("oncokb_fusions", ""),
-                        "oncokb_cna": record.get("oncokb_cna", ""),
-                        "sbs_signatures": record.get("signatures_activities_sbs", ""),
-                        "indel_signatures": record.get("signatures_activities_indel", ""),
-                        "signatures_matrix": record.get("signatures_matrix_sbs", ""),
-                        "hrdetect": record.get("hrdetect", ""),
-                        "onenesstwoness": record.get("onenesstwoness", "")
-                    })
+                # Normal row (status "0"): second sample in sample_ids if available
+                normal_sample = record["sample_ids"][1] if len(record["sample_ids"]) >= 2 else ""
+                normal_row = tumor_row.copy()
+                normal_row["sample"] = normal_sample
+                normal_row["status"] = "0"
+                normal_row["bam"] = record.get("bam_normal", "")
+                normal_row["frag_cov"] = record.get("frag_cov_normal", "")
+                normal_row["dryclean_cov"] = record.get("coverage_normal", "")
+                sample_rows.append(normal_row)
+            else:
+                status = "1"
+                bam_val = record.get("bam_tumor", "")
+                frag_cov = record.get("frag_cov_tumor", "")
+                dryclean_cov = record.get("coverage_tumor", "")
 
-                for row in sample_rows:
-                    writer.writerow(row)
+                sample_val = record["sample_ids"][0] if record["sample_ids"] else ""
+                sample_rows.append({
+                    "patient": record.get("patient_id", ""),
+                    "sample": sample_val,
+                    "status": status,
+                    "sex": record.get("sex", ""),
+                    "bam": bam_val,
+                    "msi": record.get("msisensorpro", ""),
+                    "hets": record.get("het_pileups", ""),
+                    "amber_dir": record.get("amber_dir", ""),
+                    "frag_cov": frag_cov,
+                    "dryclean_cov": dryclean_cov,
+                    "cobalt_dir": record.get("cobalt_dir", ""),
+                    "purity": record.get("purity", ""),
+                    "ploidy": record.get("ploidy", ""),
+                    "seg": record.get("seg", ""),
+                    "nseg": record.get("nseg", ""),
+                    "vcf": record.get("structural_variants", ""),
+                    "jabba_rds": record.get("jabba_rds", ""),
+                    "jabba_gg": record.get("jabba_gg", ""),
+                    "ni_balanced_gg": record.get("jabba_gg_balanced", ""),
+                    "lp_balanced_gg": record.get("jabba_gg_allelic", ""),
+                    "events": record.get("events", ""),
+                    "fusions": record.get("fusions", ""),
+                    "snv_somatic_vcf": record.get("snvs_somatic", ""),
+                    "snv_germline_vcf": record.get("snvs_germline", ""),
+                    "variant_somatic_ann": record.get("variant_annotations_somatic_vcf", ""),
+                    "variant_somatic_bcf": record.get("variant_annotations_somatic", ""),
+                    "variant_germline_ann": record.get("variant_annotations_germline_vcf", ""),
+                    "variant_germline_bcf": record.get("variant_annotations_germline", ""),
+                    "snv_multiplicity": record.get("multiplicity", ""),
+                    "oncokb_maf": record.get("oncokb_snv", ""),
+                    "oncokb_fusions": record.get("oncokb_fusions", ""),
+                    "oncokb_cna": record.get("oncokb_cna", ""),
+                    "sbs_signatures": record.get("signatures_activities_sbs", ""),
+                    "indel_signatures": record.get("signatures_activities_indel", ""),
+                    "signatures_matrix": record.get("signatures_matrix_sbs", ""),
+                    "hrdetect": record.get("hrdetect", ""),
+                    "onenesstwoness": record.get("onenesstwoness", "")
+                })
+
+            for row in sample_rows:
+                # Filter the row to include only the selected fieldnames
+                filtered_row = {key: row.get(key, "") for key in fieldnames}
+                writer.writerow(filtered_row)
+        if csv_path:
+            output_stream.close()

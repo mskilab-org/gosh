@@ -1,8 +1,7 @@
-import socket
 import shutil
-import os
 
 def get_environment_defaults():
+    import socket
     nyu_defaults = {
         'pipeline-dir': "/gpfs/data/imielinskilab/git/mskilab/nf-gos",
         'profile': "nyu",
@@ -39,6 +38,7 @@ def get_environment_defaults():
     return {}
 
 def load_required_modules(env_defaults):
+    import os
     required_commands = ['nextflow', 'aws', 'singularity']
     modules_to_load = []
     load_modules_command = ""

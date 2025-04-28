@@ -1,1 +1,1 @@
-# This file makes the 'gosh' directory a package.
+__version__ = "0.2.3"

@@ -1,4 +1,4 @@
-from os import makedirs, path
+from os import makedirs, path, getenv
 from shutil import rmtree
 from sys import exit
 from subprocess import run, CalledProcessError
@@ -105,15 +105,26 @@ def pipeline(
     else:
         skip_tools_value = skip_tools if skip_tools else None
 
-    # Update the params.json file if a skip_tools value is set.
-    if skip_tools_value is not None:
-        with open(params_file, "r") as pf:
-            params_data = json.load(pf)
-        params_data["skip_tools"] = skip_tools_value
-        with open(params_file, "w") as pf:
-            json.dump(params_data, pf, indent=4)
+    # Read and update params.json with CLI flag values
+    with open(params_file, "r") as pf:
+        params_data = json.load(pf)
 
-    oncokb_api_key = oncokb_api_key or env_defaults.get('ONCOKB_API_KEY', None)
+    # Overwrite keys from CLI flags
+    params_data["input"] = samplesheet
+    params_data["outdir"] = outdir
+
+    # Convert the provided reference to the corresponding genome value
+    genome_map = {"hg19": "GATK.GRCh37", "hg38": "GATK.GRCh38"}
+    params_data["genome"] = genome_map.get(reference, "GATK.GRCh37")
+
+    # Also update skip_tools if a skip_tools value was computed
+    if skip_tools_value is not None:
+        params_data["skip_tools"] = skip_tools_value
+
+    with open(params_file, "w") as pf:
+        json.dump(params_data, pf, indent=4)
+
+    oncokb_api_key = oncokb_api_key or getenv('ONCOKB_API_KEY', None)
     if skip_tools_value is not None and 'oncokb' not in skip_tools_value and not oncokb_api_key:
         print("OncoKB API key is required for accessing OncoKB annotations. Please provide it using the --oncokb-api-key flag or set ONCOKB_API_KEY in your environment.")
         exit(1)
@@ -223,34 +234,91 @@ def pipeline(
 
     runner.run(command)
 
+
+from ..core.outputs import OUTPUT_KEYS
 @run_cli.command()
 @click.option('-p', '--pipeline-output-dir', required=True, type=click.Path(exists=True), help="Directory containing pipeline outputs")
 @click.option('-s', '--samplesheet', default='./samplesheet.csv', required=True, type=click.Path(exists=True), help="Path to the samplesheet CSV file")
-@click.option('-e', '--emit', default='outputs', help="Whether to emit outputs.csv (for skilifting) or samplesheet.csv (for pipeline run). Options: 'outputs' or 'samplesheet'")
-@click.option('--old', default=False, help="Whether to use the old outputs mapping (default: False)")
-@click.option('-o', '--output', default='./outputs.csv', type=click.Path(), help="CSV file to save outputs")
-def outputs(pipeline_output_dir, samplesheet, emit, output, old):
+@click.option('--old', is_flag=True, default=False, help="Whether to use the old outputs mapping (default: False)")
+@click.option('-o', '--output', type=click.Path(), help="CSV file to save outputs (default: stdout)")
+@click.option('-c', '--include-columns', help='Comma-separated list of columns to include. Available: {}'.format(",".join(OUTPUT_KEYS)))
+@click.option('-C', '--exclude-columns', help='Comma-separated list of columns to exclude. Available: see --include-columns')
+def outputs(pipeline_output_dir, samplesheet, old, output, include_columns, exclude_columns):
     """
-    Instantiate an Outputs object with the provided pipeline output directory and samplesheet,
-    and emit the outputs CSV.
+    Generate an outputs.csv file suitable for skilifting.
+    Reads pipeline outputs and samplesheet to create a CSV mapping patient data to output file paths.
+    """
+    from ..core.outputs import Outputs, OUTPUT_KEYS # Import OUTPUT_KEYS for help text formatting
+
+    if include_columns and exclude_columns:
+        raise click.UsageError("Options -c/--include-columns and -C/--exclude-columns are mutually exclusive.")
+
+    include_list = include_columns.split(',') if include_columns else None
+    exclude_list = exclude_columns.split(',') if exclude_columns else None
+
+    # Validate column names if provided
+    available_columns = set(OUTPUT_KEYS)
+    if include_list:
+        invalid_cols = [col for col in include_list if col not in available_columns]
+        if invalid_cols:
+            raise click.BadParameter(f"Invalid columns specified in --include-columns: {', '.join(invalid_cols)}. Available: {', '.join(OUTPUT_KEYS)}")
+    if exclude_list:
+        invalid_cols = [col for col in exclude_list if col not in available_columns]
+        if invalid_cols:
+            raise click.BadParameter(f"Invalid columns specified in --exclude-columns: {', '.join(invalid_cols)}. Available: {', '.join(OUTPUT_KEYS)}")
+
+
+    outputs_obj = Outputs(pipeline_output_dir, samplesheet, old)
+    outputs_obj.emit_output_csv(output, include_columns=include_list, exclude_columns=exclude_list)
+    if output:
+        click.echo(f"Outputs CSV generated at: {output}")
+
+
+from ..core.outputs import SAMPLESHEET_FIELDNAMES
+@run_cli.command()
+@click.option('-p', '--pipeline-output-dir', required=True, type=click.Path(exists=True), help="Directory containing pipeline outputs")
+@click.option('-s', '--samplesheet', default='./samplesheet.csv', required=True, type=click.Path(exists=True), help="Path to the samplesheet CSV file")
+@click.option('--old', is_flag=True, default=False, help="Whether to use the old outputs mapping (default: False)")
+@click.option('-o', '--output', type=click.Path(), help="CSV file to save samplesheet (default: stdout)")
+@click.option('-c', '--include-columns', help='Comma-separated list of columns to include. Available: {}'.format(",".join(SAMPLESHEET_FIELDNAMES)))
+@click.option('-C', '--exclude-columns', help='Comma-separated list of columns to exclude. Available: see --include-columns')
+def samplesheet(pipeline_output_dir, samplesheet, old, output, include_columns, exclude_columns):
+    """
+    Generate a samplesheet.csv file suitable for a pipeline run.
+    Reads pipeline outputs and the original samplesheet to create a new samplesheet
+    with paths to generated files filled in.
     """
     from ..core.outputs import Outputs
+
+    if include_columns and exclude_columns:
+        raise click.UsageError("Options -c/--include-columns and -C/--exclude-columns are mutually exclusive.")
+
+    include_list = include_columns.split(',') if include_columns else None
+    exclude_list = exclude_columns.split(',') if exclude_columns else None
+
+    # Validate column names if provided
+    available_columns = set(SAMPLESHEET_FIELDNAMES)
+    if include_list:
+        invalid_cols = [col for col in include_list if col not in available_columns]
+        if invalid_cols:
+            raise click.BadParameter(f"Invalid columns specified in --include-columns: {', '.join(invalid_cols)}. Available: {', '.join(SAMPLESHEET_FIELDNAMES)}")
+    if exclude_list:
+        invalid_cols = [col for col in exclude_list if col not in available_columns]
+        if invalid_cols:
+            raise click.BadParameter(f"Invalid columns specified in --exclude-columns: {', '.join(invalid_cols)}. Available: {', '.join(SAMPLESHEET_FIELDNAMES)}")
+
     outputs_obj = Outputs(pipeline_output_dir, samplesheet, old)
-    if emit == 'samplesheet':
-        if output == './outputs.csv':
-            output = './new_samplesheet.csv'
-        outputs_obj.emit_samplesheet_csv(output)
+    outputs_obj.emit_samplesheet_csv(output, include_columns=include_list, exclude_columns=exclude_list)
+    if output:
         click.echo(f"Samplesheet CSV generated at: {output}")
-    else:
-        outputs_obj.emit_output_csv(output)
-        click.echo(f"Outputs CSV generated at: {output}")
+
 
 @run_cli.command()
 @click.option('-p', '--pipeline-output-dir', type=click.Path(exists=True), help="Directory containing pipeline outputs")
-@click.option('-s', '--samplesheet', type=click.Path(exists=True), help="Path to the samplesheet CSV file")
-@click.option('--old', default=False, help="Whether to use the old process_name/patient_id nf-gos outputs mapping (default: False)")
-@click.option('--output-csv', type=click.Path(exists=True), help="Path to the output CSV (if available).")
-@click.option('-t', '--cohort_type', type=click.Choice(['paired', 'tumor_only', 'heme']), default='paired', help='Type of the cohort.')
+@click.option('-s', '--samplesheet', type=click.Path(exists=True), help="Path to the samplesheet CSV file used to generate the outputs.csv")
+@click.option('--old', is_flag=True, default=False, help="Whether the outputs.csv was generated using the old process_name/patient_id nf-gos outputs mapping (default: False)")
+@click.option('--output-csv', type=click.Path(exists=True), help="Path to the outputs.csv file generated by 'gosh run outputs'.")
+@click.option('-t', '--cohort-type', type=click.Choice(['paired', 'tumor_only', 'heme']), default='paired', help='Type of the cohort.')
 @click.option('-o', '--gos_dir', type=click.Path(), required=True, help='Path to where the skilifted outputs should be deposited.')
 @click.option('-l', '--skilift-repo', type=click.Path(), default="~/git/skilift", help='Path to the skilift repo (default: ~/git/skilift)')
 @click.option('-c', '--cores', type=int, default=1, help='Number of cores to use.')
@@ -259,12 +327,32 @@ def skilift(
     gos_dir,
     skilift_repo,
     cores,
+    old,
     output_csv=None,
     pipeline_output_dir=None,
-    samplesheet=None,
-    old=False
+    samplesheet=None
 ):
     """Lift raw data into gOS compatible formats using Skilift."""
+    from os import path
+    import subprocess
+    # Need these imports here for the help text formatting in the options above
+    from ..core.outputs import OUTPUT_KEYS, SAMPLESHEET_FIELDNAMES
+
+    # Expand the skilift_repo path
+    skilift_repo = path.expanduser(skilift_repo)
+    if not path.isdir(skilift_repo):
+        if click.confirm(f"Skilift repository not found at {skilift_repo}. Would you like to clone it?", default=True):
+            clone_url = "https://github.com/mskilab-org/skilift.git"
+            click.echo(f"Cloning skilift from {clone_url} to {skilift_repo} ...")
+            try:
+                subprocess.run(["git", "clone", clone_url, skilift_repo], check=True)
+            except Exception as err:
+                click.echo(f"Error cloning skilift repository: {err}")
+                return
+        else:
+            click.echo("Skilift repository is required. Exiting.")
+            return
+
     if not pipeline_output_dir and not output_csv:
         click.echo("Error: Either --pipeline-output-dir or --output-csv must be provided.")
         return
@@ -277,12 +365,21 @@ def skilift(
             click.echo(f"Error: The directory '{pipeline_output_dir}' does not exist. Please provide a valid pipeline output directory with the -p option.")
             return
 
+        # Generate the outputs.csv file if not provided
         output_csv = './outputs.csv'
-
+        click.echo(f"Generating temporary outputs CSV at: {output_csv}")
         from ..core.outputs import Outputs
-        outputs_obj = Outputs(pipeline_output_dir, samplesheet, old)
-        outputs_obj.emit_output_csv(output_csv)
-        click.echo(f"Outputs CSV generated at: {output_csv}")
+        try:
+            outputs_obj = Outputs(pipeline_output_dir, samplesheet, old)
+            outputs_obj.emit_output_csv(output_csv)
+            click.echo(f"Outputs CSV generated successfully.")
+        except Exception as e:
+            click.echo(f"Error generating outputs CSV: {e}")
+            return
+
+    if not path.isfile(output_csv):
+        click.echo(f"Error: The outputs CSV file '{output_csv}' does not exist or could not be generated.")
+        return
 
     makedirs(path.expanduser(gos_dir), exist_ok=True)
 
