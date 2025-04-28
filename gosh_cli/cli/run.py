@@ -1,4 +1,4 @@
-from os import makedirs, path
+from os import makedirs, path, getenv
 from shutil import rmtree
 from sys import exit
 from subprocess import run, CalledProcessError
@@ -124,7 +124,7 @@ def pipeline(
     with open(params_file, "w") as pf:
         json.dump(params_data, pf, indent=4)
 
-    oncokb_api_key = oncokb_api_key or env_defaults.get('ONCOKB_API_KEY', None)
+    oncokb_api_key = oncokb_api_key or getenv('ONCOKB_API_KEY', None)
     if skip_tools_value is not None and 'oncokb' not in skip_tools_value and not oncokb_api_key:
         print("OncoKB API key is required for accessing OncoKB annotations. Please provide it using the --oncokb-api-key flag or set ONCOKB_API_KEY in your environment.")
         exit(1)
