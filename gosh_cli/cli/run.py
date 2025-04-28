@@ -105,13 +105,24 @@ def pipeline(
     else:
         skip_tools_value = skip_tools if skip_tools else None
 
-    # Update the params.json file if a skip_tools value is set.
+    # Read and update params.json with CLI flag values
+    with open(params_file, "r") as pf:
+        params_data = json.load(pf)
+
+    # Overwrite keys from CLI flags
+    params_data["input"] = samplesheet
+    params_data["outdir"] = outdir
+
+    # Convert the provided reference to the corresponding genome value
+    genome_map = {"hg19": "GATK.GRCh37", "hg38": "GATK.GRCh38"}
+    params_data["genome"] = genome_map.get(reference, "GATK.GRCh37")
+
+    # Also update skip_tools if a skip_tools value was computed
     if skip_tools_value is not None:
-        with open(params_file, "r") as pf:
-            params_data = json.load(pf)
         params_data["skip_tools"] = skip_tools_value
-        with open(params_file, "w") as pf:
-            json.dump(params_data, pf, indent=4)
+
+    with open(params_file, "w") as pf:
+        json.dump(params_data, pf, indent=4)
 
     oncokb_api_key = oncokb_api_key or env_defaults.get('ONCOKB_API_KEY', None)
     if skip_tools_value is not None and 'oncokb' not in skip_tools_value and not oncokb_api_key:
