@@ -150,14 +150,17 @@ OUTPUT_FILES_MAPPING_OLD = {
 OUTPUT_FILES_MAPPING = {
     "qc_dup_rate": [
         r"gatk_qc/.*/.*metrics",
+        r"gatk_qc/.*metrics",
         r"markduplicates/.*metrics"
 	],
     "qc_dup_rate_tumor": [
         r"gatk_qc/.*/.*metrics",
+        r"gatk_qc/.*metrics",
         r"markduplicates/.*metrics"
 	],
     "qc_dup_rate_normal": [
         r"gatk_qc/.*/.*metrics",
+        r"gatk_qc/.*metrics",
         r"markduplicates/.*metrics"
 	],
     "qc_alignment_summary": [
