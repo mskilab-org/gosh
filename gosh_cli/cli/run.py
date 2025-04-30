@@ -388,7 +388,9 @@ def skilift(
     devtools::load_all("{path.expanduser(skilift_repo)}")
     cohort <- Cohort$new("{output_csv}", cohort_type="{cohort_type}")
     saveRDS(cohort, "{gos_dir}/cohort.rds")
-    lift_all(cohort, output_data_dir="{gos_dir}", cores={cores})
+    cohort_mod <- lift_all(cohort, output_data_dir="{gos_dir}", cores={cores})
+    message("Saving over cohort")
+    saveRDS(cohort_mod, "{gos_dir}/cohort.rds")
     '''
 
     try:
