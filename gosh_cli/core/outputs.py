@@ -16,8 +16,14 @@ OUTPUT_KEYS = [
     "bam_tumor",
     "bam_normal",
     "qc_dup_rate",
+    "qc_dup_rate_tumor",
+    "qc_dup_rate_normal",
     "qc_alignment_summary",
+    "qc_alignment_summary_tumor",
+    "qc_alignment_summary_normal",
     "qc_insert_size",
+    "qc_insert_size_tumor",
+    "qc_insert_size_normal",
     "qc_coverage_metrics",
     "qc_coverage_metrics_tumor",
     "qc_coverage_metrics_normal",
@@ -142,17 +148,57 @@ OUTPUT_FILES_MAPPING_OLD = {
 
 # Map each output key to its file regex pattern(s)
 OUTPUT_FILES_MAPPING = {
-    "qc_dup_rate": r"gatk_qc/.*/.*metrics",
-    "qc_alignment_summary": r"picard_qc/.*/.*alignment_summary_metrics",
-    "qc_insert_size": r"picard_qc/.*/.*insert_size_metrics",
-    "qc_coverage_metrics": r"picard_qc/.*/.*coverage_metrics",
-    "qc_coverage_metrics_tumor": r"picard_qc/tumor/.*/.*coverage_metrics",
-    "qc_coverage_metrics_normal": r"picard_qc/normal/.*/.*coverage_metrics",
+    "qc_dup_rate": [
+        r"gatk_qc/.*/.*metrics",
+        r"markduplicates/.*metrics"
+	],
+    "qc_dup_rate_tumor": [
+        r"gatk_qc/.*/.*metrics",
+        r"markduplicates/.*metrics"
+	],
+    "qc_dup_rate_normal": [
+        r"gatk_qc/.*/.*metrics",
+        r"markduplicates/.*metrics"
+	],
+    "qc_alignment_summary": [
+        r"picard_qc/.*/.*alignment_summary_metrics",
+        r"picard_qc/.*alignment_summary_metrics",
+	],
+    "qc_alignment_summary_tumor": [
+        r"picard_qc/.*/.*alignment_summary_metrics",
+        r"picard_qc/.*alignment_summary_metrics"
+	],
+    "qc_alignment_summary_normal": [
+        r"picard_qc/.*/.*alignment_summary_metrics",
+        r"picard_qc/.*alignment_summary_metrics"
+	],
+    "qc_insert_size": [
+        r"picard_qc/.*insert_size_metrics",
+        r"picard_qc/.*/.*insert_size_metrics"
+	],
+    "qc_insert_size_tumor": [
+        r"picard_qc/.*insert_size_metrics"
+	],
+    "qc_insert_size_normal": [
+        r"picard_qc/.*insert_size_metrics"
+	],
+    "qc_coverage_metrics": [
+        r"picard_qc/.*coverage_metrics",
+        r"picard_qc/.*/.*coverage_metrics"
+	],
+    "qc_coverage_metrics_tumor": [
+        r"picard_qc/.*coverage_metrics",
+        r"picard_qc/tumor/.*/.*coverage_metrics"
+	],
+    "qc_coverage_metrics_normal": [
+        r"picard_qc/.*coverage_metrics",
+        r"picard_qc/normal/.*/.*coverage_metrics"
+	],
     "msisensorpro": r"msisensorpro/.*_report$",
     "structural_variants": [
         r"gridss/.*high_confidence_somatic\.vcf\.bgz$",
         r"tumor_only_junction_filter/.*/somatic\.filtered\.sv\.rds$",
-        r"gridss/.*/somatic\.filtered\.sv\.rds$",
+        r"gridss/.*somatic\.filtered\.sv\.rds$",
     ],
     "structural_variants_unfiltered": r"gridss.*/.*\.gridss\.filtered\.vcf\.gz$",
     "frag_cov_tumor": r"fragcounter/tumor/cov\.rds$",
@@ -200,11 +246,11 @@ OUTPUT_FILES_MAPPING = {
 }
 
 class Outputs:
-    def __init__(self, outputs_dir: str, samplesheet: str, use_old: bool = False):
+    def __init__(self, outputs_dir: str, samplesheet: str, use_old: bool = False, prefer_outputs: bool = False):
         self.outputs_dir = os.path.abspath(outputs_dir)
         self.samplesheet = samplesheet
         self.samples_data = self._read_samplesheet()
-        self.outputs = self._collect_outputs(use_old_output_files_mapping=use_old)
+        self.outputs = self._collect_outputs(use_old_output_files_mapping=use_old, prefer_outputs = prefer_outputs)
 
     def _read_samplesheet(self) -> dict:
         """
@@ -360,13 +406,14 @@ class Outputs:
                     if record.get(key):
                         break
 
-    def _collect_outputs(self, use_old_output_files_mapping = False) -> list:
+    def _collect_outputs(self, use_old_output_files_mapping = False, prefer_outputs = False) -> list:
         """
         For each patient_id from the samplesheet, scan the outputs directory to find files matching
         the regex patterns defined in OUTPUT_FILES_MAPPING. For each output key, use the value from
         the samplesheet metadata if present; otherwise, set it to the matched file path.
         Use an empty string if nothing is found.
         """
+        import ipdb
         outputs_list = []
         for patient_id, data in self.samples_data.items():
             # Initialize with empty strings for all keys
@@ -384,20 +431,61 @@ class Outputs:
             else:
                 mapping = OUTPUT_FILES_MAPPING
                 for key, pattern in mapping.items():
-                    if record.get(key):
+                    is_key_tumor = "_tumor" in key
+                    is_key_normal = "_normal" in key
+                    is_key_neither_tumor_normal = not is_key_tumor and not is_key_normal
+                    # if record.get(key):
+                    if not prefer_outputs and record.get(key):
                         continue  # prefer samplesheet value if available
                     patterns = pattern if isinstance(pattern, list) else [pattern]
                     patient_dir = os.path.join(self.outputs_dir, patient_id)
+                    is_pattern_filepath_matched = False ## Initializing break conditional
+                    ## Pattern finding
                     for pat in patterns:
                         search_pattern = os.path.join(patient_dir, "**", "*")
                         for filepath in glob.glob(search_pattern, recursive=True):
                             rel_path = os.path.relpath(filepath, patient_dir)
-                            if re.search(pat, rel_path):
+                            ## FIXME: hack logic is that if sample_ids is not present, return length 2 list
+                            ## with random, unmatchable strings
+                            data_sample_ids = data.get(
+                                "sample_ids", 
+                                [
+                                    "VBHWHNhrLQwyX56NDOBoMWBO", 
+                                    "dT1Z99GJSU1XT95v1vARKdOt"
+                                ]
+                            )
+                            is_tumor_sample_id_in_path = bool(re.search(data_sample_ids[0], rel_path))
+                            is_normal_sample_id_in_path = False
+                            if len(data_sample_ids) > 1:
+                            	is_normal_sample_id_in_path = bool(re.search(data_sample_ids[1], rel_path))
+                            # is_sample_id_in_path = is_tumor_sample_id_in_path or is_normal_sample_id_in_path
+                            is_sample_id_in_path = any([bool(re.search(sample_id, rel_path)) for sample_id in data_sample_ids])
+                            is_sample_id_absent_in_path = not is_sample_id_in_path
+                            is_pattern_present = bool(re.search(pat, rel_path))
+                            ## Pattern is in file path, sample_id isn't in file path
+                            is_proceed_with_first_file_match = is_pattern_present and is_sample_id_absent_in_path
+                            ## Pattern is in file path, sample_id is in file path, and key matches with the sample_id type (tumor vs normal)
+                            is_sample_id_file_matched = is_pattern_present and is_sample_id_in_path
+                            is_proceed_with_tumor_sample_id_file_match = is_sample_id_file_matched and is_tumor_sample_id_in_path and is_key_tumor
+                            is_proceed_with_normal_sample_id_file_match = is_sample_id_file_matched and is_normal_sample_id_in_path and is_key_normal
+                            ## Pattern is in file path, sample_id is in file path and is the tumor, but the column is neither tumor/normal specific
+                            ## The below will preferentially populate with the tumor (which is what we want in most cases)
+                            is_proceed_with_tumor_file_match = is_sample_id_file_matched and is_key_neither_tumor_normal and is_tumor_sample_id_in_path
+                            is_filepath_to_be_populated = (
+                                is_proceed_with_first_file_match
+                                or is_proceed_with_tumor_sample_id_file_match
+                                or is_proceed_with_normal_sample_id_file_match
+                                or is_proceed_with_tumor_file_match
+							)
+                            if is_filepath_to_be_populated:
                                 record[key] = filepath
                                 if pat.endswith("/"):
                                     record[key] = os.path.dirname(filepath)
+                            is_key_populated = bool(record.get(key)) 
+                            if is_key_populated:
+                                is_pattern_filepath_matched = True
                                 break
-                        if record.get(key):
+                        if is_pattern_filepath_matched:
                             break
 
             # New: Populate purity and ploidy from purple.purity.tsv (if available)
@@ -415,6 +503,7 @@ class Outputs:
                             record["ploidy"] = mapping_dict["ploidy"]
 
             outputs_list.append(record)
+        # ipdb.set_trace()
         return outputs_list
 
     def emit_output_csv(self, csv_path: Optional[str] = None,
