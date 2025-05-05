@@ -1,8 +1,12 @@
+import json
+import os
 from os import makedirs, path, getenv
 from shutil import rmtree
 from sys import exit
 from subprocess import run, CalledProcessError
 import click
+from ..core.module_loader import get_environment_defaults
+from ..utils.datasets import convert_to_datasets_path
 
 @click.group(name='run')
 def run_cli():
@@ -59,10 +63,12 @@ def pipeline(
     from ..core.nextflow import NextflowRunner
     from ..core.params_wizard import create_params_file
     from ..core.nextflow_log import get_entries_with_process_names, get_entries_with_sample_names
-    from ..core.module_loader import get_environment_defaults, load_required_modules
-    import json
+    from ..core.nextflow import NextflowRunner
+    from ..core.params_wizard import create_params_file
+    from ..core.nextflow_log import get_entries_with_process_names, get_entries_with_sample_names
+    from ..core.module_loader import load_required_modules # Keep this specific import if needed elsewhere
 
-    # Retrieve environment defaults
+    # Retrieve environment defaults - already imported above
     env_defaults = get_environment_defaults()
 
     # Set pipeline_dir if not specified
@@ -393,3 +399,103 @@ def skilift(
         run(['Rscript', '-e', r_code], check=True)
     except CalledProcessError as e:
         click.echo(f"Error executing R script: {e}")
+
+
+@run_cli.command()
+@click.option('-d', '--datasets-json',
+              type=click.Path(),
+              help='Path to the datasets.json file. Defaults to value from environment config.')
+@click.option('-g', '--gos-data-dir',
+              required=True,
+              type=click.Path(exists=True, file_okay=False, dir_okay=True, readable=True, resolve_path=True),
+              help='Path to the directory containing skilifted gOS data and datafiles.json.')
+@click.option('-t', '--title',
+              required=True,
+              type=str,
+              help='Title for the new dataset cohort.')
+def datasets(datasets_json, gos_data_dir, title):
+    """
+    Add a new dataset entry to the datasets.json file for gOS webapp consumption.
+    """
+    env_defaults = get_environment_defaults()
+    default_datasets_json = env_defaults.get('datasets_json')
+
+    if not datasets_json:
+        if not default_datasets_json:
+            click.echo("Error: --datasets-json path must be provided or configured in environment defaults.", err=True)
+            exit(1)
+        datasets_json = default_datasets_json
+        click.echo(f"Using default datasets.json path from environment: {datasets_json}")
+    else:
+        # Ensure the directory for the datasets.json exists if a path is provided
+        datasets_dir = os.path.dirname(os.path.abspath(datasets_json))
+        os.makedirs(datasets_dir, exist_ok=True)
+
+
+    # Validate gos_data_dir contains datafiles.json
+    datafiles_path = os.path.join(gos_data_dir, 'datafiles.json')
+    if not os.path.isfile(datafiles_path):
+        click.echo(f"Error: 'datafiles.json' not found in the specified gOS data directory: {gos_data_dir}", err=True)
+        exit(1)
+
+    # Generate ID from title
+    dataset_id = title.lower().replace(' ', '_')
+
+    # Convert gos_data_dir to the required URL format
+    try:
+        data_path_url = convert_to_datasets_path(gos_data_dir)
+    except ValueError as e:
+        click.echo(f"Error converting gOS data directory path: {e}", err=True)
+        click.echo("Please ensure the path follows the expected structure (e.g., /path/to/{lab_name}/external/{rest_of_path})", err=True)
+        exit(1)
+
+    datafiles_path_url = data_path_url + "datafiles.json"
+
+    # Create the new dataset entry
+    new_entry = {
+        "id": dataset_id,
+        "title": title,
+        "dataPath": data_path_url,
+        "datafilesPath": datafiles_path_url
+    }
+
+    # Read existing datasets.json or initialize if it doesn't exist
+    all_datasets = []
+    if os.path.exists(datasets_json):
+        try:
+            with open(datasets_json, 'r') as f:
+                all_datasets = json.load(f)
+                if not isinstance(all_datasets, list):
+                    click.echo(f"Error: Expected {datasets_json} to contain a JSON list.", err=True)
+                    exit(1)
+        except json.JSONDecodeError:
+            click.echo(f"Error: Could not decode JSON from {datasets_json}. Initializing with new entry.", err=True)
+            all_datasets = [] # Reset if file is corrupt
+        except Exception as e:
+            click.echo(f"Error reading {datasets_json}: {e}", err=True)
+            exit(1)
+
+    # Check if an entry with the same ID or title already exists
+    existing_ids = {entry.get('id') for entry in all_datasets if 'id' in entry}
+    existing_titles = {entry.get('title') for entry in all_datasets if 'title' in entry}
+
+    if new_entry['id'] in existing_ids:
+        click.echo(f"Error: Dataset with ID '{new_entry['id']}' already exists in {datasets_json}.", err=True)
+        exit(1)
+    if new_entry['title'] in existing_titles:
+        click.echo(f"Warning: Dataset with title '{new_entry['title']}' already exists in {datasets_json}. Proceeding with unique ID '{new_entry['id']}'.", err=True)
+
+
+    # Append the new entry
+    all_datasets.append(new_entry)
+
+    # Write the updated list back to datasets.json
+    try:
+        with open(datasets_json, 'w') as f:
+            json.dump(all_datasets, f, indent=4)
+        click.echo(f"Successfully added dataset '{title}' (ID: {dataset_id}) to {datasets_json}")
+        click.echo(f"  dataPath: {data_path_url}")
+        click.echo(f"  datafilesPath: {datafiles_path_url}")
+    except Exception as e:
+        click.echo(f"Error writing updated data to {datasets_json}: {e}", err=True)
+        exit(1)

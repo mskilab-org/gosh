@@ -8,6 +8,7 @@ def get_environment_defaults():
         'nextflow_module': "nextflow/23.04.4",
         'aws_module': 'aws-cli',
         'JAVA_HOME': '/gpfs/share/apps/jdk/17u028',
+        'datasets_json': '/gpfs/data/imielinskilab/external/mskiweb/xanthc01/case-report/datasets.json'
     }
     nygc_defaults = {
         'pipeline-dir': "/gpfs/commons/groups/imielinski_lab/git/nf-gos",
