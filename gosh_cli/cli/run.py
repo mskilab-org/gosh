@@ -226,8 +226,9 @@ def pipeline(
 
     command = (
         f"{load_modules_command} "
-        f"{runner.cmd} secrets set ONCOKB_API_KEY {oncokb_api_key} &&"
-        f"{runner.cmd} run {pipeline_dir} "
+        f"{runner.cmd} secrets set ONCOKB_API_KEY {oncokb_api_key} && "
+        f"{runner.cmd} -log .nextflow_{runner.get_timestamp()}.log "
+        f"run {pipeline_dir} "
         f"-params-file {params_file} "
         f"-profile {profile} "
         f"-with-report report_{runner.get_timestamp()}.html "
@@ -245,10 +246,11 @@ from ..core.outputs import OUTPUT_KEYS
 @click.option('-p', '--pipeline-output-dir', required=True, type=click.Path(exists=True), help="Directory containing pipeline outputs")
 @click.option('-s', '--samplesheet', default='./samplesheet.csv', required=True, type=click.Path(exists=True), help="Path to the samplesheet CSV file")
 @click.option('--old', is_flag=True, default=False, help="Whether to use the old outputs mapping (default: False)")
+@click.option('--prefer-outputs', is_flag=True, default=False, help="If output and samplesheet column are both found, use the output column (default: False)")
 @click.option('-o', '--output', type=click.Path(), help="CSV file to save outputs (default: stdout)")
 @click.option('-c', '--include-columns', help='Comma-separated list of columns to include. Available: {}'.format(",".join(OUTPUT_KEYS)))
 @click.option('-C', '--exclude-columns', help='Comma-separated list of columns to exclude. Available: see --include-columns')
-def outputs(pipeline_output_dir, samplesheet, old, output, include_columns, exclude_columns):
+def outputs(pipeline_output_dir, samplesheet, old, prefer_outputs, output, include_columns, exclude_columns):
     """
     Generate an outputs.csv file suitable for skilifting.
     Reads pipeline outputs and samplesheet to create a CSV mapping patient data to output file paths.
@@ -273,7 +275,7 @@ def outputs(pipeline_output_dir, samplesheet, old, output, include_columns, excl
             raise click.BadParameter(f"Invalid columns specified in --exclude-columns: {', '.join(invalid_cols)}. Available: {', '.join(OUTPUT_KEYS)}")
 
 
-    outputs_obj = Outputs(pipeline_output_dir, samplesheet, old)
+    outputs_obj = Outputs(pipeline_output_dir, samplesheet, old, prefer_outputs)
     outputs_obj.emit_output_csv(output, include_columns=include_list, exclude_columns=exclude_list)
     if output:
         click.echo(f"Outputs CSV generated at: {output}")
@@ -392,7 +394,9 @@ def skilift(
     devtools::load_all("{path.expanduser(skilift_repo)}")
     cohort <- Cohort$new("{output_csv}", cohort_type="{cohort_type}")
     saveRDS(cohort, "{gos_dir}/cohort.rds")
-    lift_all(cohort, output_data_dir="{gos_dir}", cores={cores})
+    cohort_mod <- lift_all(cohort, output_data_dir="{gos_dir}", cores={cores})
+    message("Saving over cohort")
+    saveRDS(cohort_mod, "{gos_dir}/cohort.rds")
     '''
 
     try:
