@@ -13,6 +13,15 @@ def run_cli():
     """Run pipeline commands"""
     pass
 
+# Define the full list of tools available in the pipeline
+ALL_TOOLS = [
+    "aligner", "bamqc", "msisensorpro", "gridss", "amber", "fragcounter",
+    "dryclean", "cbs", "sage", "purple", "jabba", "non_integer_balance",
+    "lp_phased_balance", "events", "fusions", "snpeff", "snv_multiplicity",
+    "oncokb", "signatures", "hrdetect", "onenesstwoness"
+]
+ALL_TOOLS_STR = ",".join(ALL_TOOLS)
+
 @run_cli.command()
 @click.option('--pipeline-dir',
               help='Path to nf-gos pipeline repo')
@@ -39,7 +48,9 @@ def run_cli():
 @click.option('-s', '--samples',
               help='Comma-separated list of sample IDs to rerun')
 @click.option('--skip-tools',
-              help='Comma-separated list of tools to skip (tools: aligner,bamqc,msisensorpro,gridss,amber,fragcounter,dryclean,cbs,sage,purple,jabba,non_integer_balance,lp_phased_balance,events,fusions,snpeff,snv_multiplicity,oncokb,signatures,hrdetect,,onenesstwoness)')
+              help=f'Comma-separated list of tools to skip. Mutually exclusive with --include-tools. Available: {ALL_TOOLS_STR}')
+@click.option('--include-tools',
+              help=f'Comma-separated list of tools to include. Mutually exclusive with --skip-tools. Available: {ALL_TOOLS_STR}')
 @click.option('--preset',
               default='default',
               type=click.Choice(['default', 'jabba', 'hrd', 'heme']),
@@ -57,9 +68,14 @@ def pipeline(
     processes,
     samples,
     skip_tools,
+    include_tools,
     preset,
     oncokb_api_key
 ):
+    # Validate mutually exclusive options
+    if skip_tools and include_tools:
+        raise click.UsageError("Options --skip-tools and --include-tools are mutually exclusive.")
+
     from ..core.nextflow import NextflowRunner
     from ..core.params_wizard import create_params_file
     from ..core.nextflow_log import get_entries_with_process_names, get_entries_with_sample_names
@@ -100,16 +116,35 @@ def pipeline(
         else:
             params_file = default_params
 
-    # Determine the skip_tools value.
-    if preset != 'default':
+    # Determine the skip_tools value based on flags and presets
+    skip_tools_value = None
+    if include_tools:
+        # Calculate skip_tools based on include_tools
+        included_set = set(t.strip() for t in include_tools.split(','))
+        # Validate included tools
+        invalid_tools = included_set - set(ALL_TOOLS)
+        if invalid_tools:
+             raise click.BadParameter(f"Invalid tools specified in --include-tools: {', '.join(invalid_tools)}. Available: {ALL_TOOLS_STR}")
+        skipped_set = set(ALL_TOOLS) - included_set
+        skip_tools_value = ",".join(sorted(list(skipped_set)))
+        print(f"Calculating skip_tools based on --include-tools: {skip_tools_value}")
+    elif skip_tools:
+        # Validate skipped tools
+        skipped_set = set(t.strip() for t in skip_tools.split(','))
+        invalid_tools = skipped_set - set(ALL_TOOLS)
+        if invalid_tools:
+             raise click.BadParameter(f"Invalid tools specified in --skip-tools: {', '.join(invalid_tools)}. Available: {ALL_TOOLS_STR}")
+        skip_tools_value = skip_tools # Use provided skip_tools directly
+    elif preset != 'default':
+        # Calculate skip_tools based on preset if no specific flags are given
         if preset == 'jabba':
             skip_tools_value = "sage,snpeff,snv_multiplicity,signatures,hrdetect"
         elif preset == 'hrd':
             skip_tools_value = "non_integer_balance,lp_phased_balance,events,fusions"
         elif preset == 'heme':
             skip_tools_value = "msisensorpro,hrdetect,onenesstwoness"
-    else:
-        skip_tools_value = skip_tools if skip_tools else None
+        print(f"Using preset '{preset}', setting skip_tools to: {skip_tools_value}")
+    # else: skip_tools_value remains None (or empty string equivalent in params)
 
     # Read and update params.json with CLI flag values
     with open(params_file, "r") as pf:
