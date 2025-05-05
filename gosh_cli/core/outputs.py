@@ -443,6 +443,12 @@ class Outputs:
             print("Error: No columns selected for output.", file=sys.stderr)
             return
 
+        # remove empty columns
+        fieldnames = [col for col in fieldnames if any(row.get(col) for row in self.outputs)]
+        if not fieldnames:
+            print("Error: No columns selected for output.", file=sys.stderr)
+            return
+
         if csv_path:
             output_stream = open(csv_path, "w", newline="")
         else:
