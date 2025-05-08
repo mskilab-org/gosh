@@ -69,7 +69,7 @@ def load_required_modules(env_defaults):
         print("'singularity' command is already available.")
 
     # Check if JAVA_HOME is set to correct path
-    if 'JAVA_HOME' not in os.environ or os.environ['JAVA_HOME'] != env_defaults['JAVA_HOME']:
+    if 'JAVA_HOME' not in os.environ and os.environ['JAVA_HOME'] != env_defaults['JAVA_HOME']:
         print(f"Setting JAVA_HOME to {env_defaults['JAVA_HOME']}")
         os.environ['JAVA_HOME'] = env_defaults['JAVA_HOME']
     else:
