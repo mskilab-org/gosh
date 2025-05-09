@@ -435,7 +435,6 @@ class Outputs:
         the samplesheet metadata if present; otherwise, set it to the matched file path.
         Use an empty string if nothing is found.
         """
-        import ipdb
         outputs_list = []
         for patient_id, data in self.samples_data.items():
             # Initialize with empty strings for all keys
