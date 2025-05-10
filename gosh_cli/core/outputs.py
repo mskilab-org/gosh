@@ -720,10 +720,10 @@ class Outputs:
                 normal_row["sample"] = normal_sample
                 normal_row["status"] = "0"
                 normal_row["bam"] = record.get("bam_normal", "")
-                normal_row["qc_dup_rate_normal"] = record.get("qc_dup_rate_normal", "")
-                normal_row["qc_insert_size_normal"] = record.get("qc_insert_size_normal", "")
-                normal_row["qc_alignment_summary_normal"] = record.get("qc_alignment_summary_normal", "")
-                normal_row["qc_coverage_metrics_normal"] = record.get("qc_coverage_metrics_normal", "")
+                normal_row["qc_dup_rate"] = record.get("qc_dup_rate_normal", "")
+                normal_row["qc_insert_size"] = record.get("qc_insert_size_normal", "")
+                normal_row["qc_alignment_summary"] = record.get("qc_alignment_summary_normal", "")
+                normal_row["qc_coverage_metrics"] = record.get("qc_coverage_metrics_normal", "")
                 normal_row["frag_cov"] = record.get("frag_cov_normal", "")
                 normal_row["dryclean_cov"] = record.get("coverage_normal", "")
                 sample_rows.append(normal_row)
