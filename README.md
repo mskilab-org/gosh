@@ -1,11 +1,11 @@
 # gOSh
 
-A CLI for the nf-gOS pipeline.
+A CLI for the [nf-gOS](https://github.com/mskilab-org/nf-gos) pipeline.
 
 ## Quickstart
 1. `gosh run pipeline` to run the nf-gos pipeline (make sure to provide a samplesheet)
-  - If you want to run the JaBbA pipeline, use `gosh run pipeline --preset jabba`
-  - If you want to run the HRD classifier pipeline, use `gosh run pipeline --preset hrd`
+  - If you want to run only the JaBbA pipeline, use `gosh run pipeline --preset jabba`
+  - If you want to run only the HRD classifier pipeline, use `gosh run pipeline --preset hrd`
 2. `gosh run skilift` to convert the pipeline outputs into something ingestible by the gOS frontend
 3. (optional) `gosh run outputs -p [pipeline results directory] -s [samplesheet path]` to generate a csv containing your outputs. This is automatically done when you run `gosh run skilift` with a pipeline directory
 
