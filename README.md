@@ -4,6 +4,8 @@ A CLI for the nf-gOS pipeline.
 
 ## Quickstart
 1. `gosh run pipeline` to run the nf-gos pipeline (make sure to provide a samplesheet)
+  - If you want to run the JaBbA pipeline, use `gosh run pipeline --preset jabba`
+  - If you want to run the HRD classifier pipeline, use `gosh run pipeline --preset hrd`
 2. `gosh run skilift` to convert the pipeline outputs into something ingestible by the gOS frontend
 3. (optional) `gosh run outputs -p [pipeline results directory] -s [samplesheet path]` to generate a csv containing your outputs. This is automatically done when you run `gosh run skilift` with a pipeline directory
 
@@ -169,7 +171,12 @@ The pipeline will automatically detect the environment variable.
 * **Pipeline Source Code (--pipeline-dir):** The tool automatically finds the nf-gOS pipeline code in shared lab directories for nyu and nygc profiles. To use a different version (e.g., your own clone), specify its path:  
   `gosh run pipeline --pipeline-dir /path/to/your/nf-gOS/clone`
 
-* **Presets (--preset):** Apply predefined parameter sets and potentially skip irrelevant pipeline steps for specific analysis types (e.g., heme). This simplifies configuration for common scenarios. Check `gosh run pipeline --help` or pipeline documentation for available presets.
+* **Presets (--preset):** Apply predefined parameter sets and potentially skip irrelevant pipeline steps for specific analysis types (e.g., heme). This simplifies configuration for common scenarios.
+
+The following presets are supported:
+- `--preset jabba`: For running the JaBbA pipeline.
+- `--preset hrd`: For running the HRD classification pipeline.
+- `--preset heme`: For hematologic malignancies.
 
 **Resuming a Pipeline Run:**
 
