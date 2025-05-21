@@ -426,7 +426,6 @@ class Outputs:
         the samplesheet metadata if present; otherwise, set it to the matched file path.
         Use an empty string if nothing is found.
         """
-        import ipdb
         outputs_list = []
         for patient_id, data in self.samples_data.items():
             # Initialize with empty strings for all keys
@@ -501,7 +500,6 @@ class Outputs:
                         if is_pattern_filepath_matched:
                             break
 
-            # New: Populate purity and ploidy from purple.purity.tsv (if available)
             purity_file = record["purple_pp_best_fit"]
             if purity_file:
                 with open(purity_file) as pf:
@@ -516,7 +514,6 @@ class Outputs:
                             record["ploidy"] = mapping_dict["ploidy"]
 
             outputs_list.append(record)
-        # ipdb.set_trace()
         return outputs_list
 
     def emit_output_csv(self, csv_path: Optional[str] = None,
