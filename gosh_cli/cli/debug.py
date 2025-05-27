@@ -49,7 +49,7 @@ def eye(log_file):
 
 @debug_cli.command()
 @click.option('-s', '--sample_names', type=str, help='Comma-separated list of sample ID(s).')
-@click.option('-p', '--process_names', type=str, help='Comma-separated list of process name(s).')
+@click.option('-p', '--process_names', type=str, help='Comma-separated list of process name(s) (in ALL CAPS).')
 @click.option('-o', '--output', type=click.Path(), help='Output file to save the results as CSV.')
 @click.option('--refresh', is_flag=True, help='Refresh log cache')
 @click.option('--status', type=str, help='Comma-separated list of statuses to filter by (e.g., FAILED,COMPLETED, CACHED, ABORTED).')
