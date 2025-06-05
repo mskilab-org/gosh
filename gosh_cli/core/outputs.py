@@ -164,6 +164,15 @@ OUTPUT_FILES_MAPPING_OLD = {
 
 # Map each output key to its file regex pattern(s)
 OUTPUT_FILES_MAPPING = {
+    "bam": [
+        r"alignment/.*\.bam$"	
+	],
+    "bam_tumor": [
+        r"alignment/.*\.bam$"	
+	],
+    "bam_normal": [
+        r"alignment/.*\.bam$"	
+	],
     "qc_dup_rate": [
         r"gatk_qc/.*/.*metrics",
         r"gatk_qc/.*metrics",
@@ -238,6 +247,7 @@ OUTPUT_FILES_MAPPING = {
     "cobalt_dir": r"cobalt/cobalt/",
     "purple_pp_range": r"purple/.*purple\.purity\.range\.tsv$",
     "purple_pp_best_fit": r"purple/.*purple\.purity\.tsv$",
+    "purple_qc": r"purple/.*purple\.qc$",
     "seg": r"cbs/seg.rds",
     "nseg": r"cbs/nseg.rds",
     "multiplicity": r"snv_multiplicity/.*est_snv_cn_somatic\.rds$",
@@ -509,7 +519,6 @@ class Outputs:
                         if is_pattern_filepath_matched:
                             break
 
-            # New: Populate purity and ploidy from purple.purity.tsv (if available)
             purity_file = record["purple_pp_best_fit"]
             if purity_file:
                 with open(purity_file) as pf:
@@ -524,7 +533,6 @@ class Outputs:
                             record["ploidy"] = mapping_dict["ploidy"]
 
             outputs_list.append(record)
-        # ipdb.set_trace()
         return outputs_list
 
     def emit_output_csv(self, csv_path: Optional[str] = None,
