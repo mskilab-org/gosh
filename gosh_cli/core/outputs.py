@@ -28,6 +28,7 @@ OUTPUT_KEYS = [
     "qc_coverage_metrics_tumor",
     "qc_coverage_metrics_normal",
     "msisensorpro",
+    "msisensorpro_germline",
     "structural_variants",
     "structural_variants_unfiltered",
     "frag_cov_tumor",
@@ -79,27 +80,23 @@ OUTPUT_KEYS = [
 
 # Define the default samplesheet columns
 SAMPLESHEET_FIELDNAMES = [
-    "patient", "sample", "status", "sex", "bam", 
-    "qc_dup_rate",
-    "qc_dup_rate_tumor",
-	"qc_dup_rate_normal",
-	"qc_insert_size",
-	"qc_insert_size_tumor",
-	"qc_insert_size_normal",
-	"qc_alignment_summary",
-	"qc_alignment_summary_tumor",
-	"qc_alignment_summary_normal",
-	"qc_coverage_metrics",
-	"qc_coverage_metrics_tumor",
-	"qc_coverage_metrics_normal", 
-	"msi", "hets", "amber_dir",
-    "frag_cov", "dryclean_cov", "cobalt_dir", "purity", "ploidy", "seg", "nseg",
-    "vcf", "jabba_rds", "jabba_gg", "ni_balanced_gg", "lp_balanced_gg",
-    "events", "fusions", "snv_somatic_vcf", "snv_germline_vcf",
-    "variant_somatic_ann", "variant_somatic_bcf",
-    "variant_germline_ann", "variant_germline_bcf", "snv_multiplicity",
-    "oncokb_maf", "oncokb_fusions", "oncokb_cna", "sbs_signatures",
-    "indel_signatures", "signatures_matrix", "hrdetect", "onenesstwoness"
+    "patient", "sample", "status", "sex", 
+    "bam", 
+    "qc_dup_rate", "qc_alignment_summary", "qc_insert_size", "qc_coverage_metrics", 
+    "msi", "msi_germline", 
+    "hets", "amber_dir", 
+    "frag_cov", "dryclean_cov",
+    "cobalt_dir", "purity", "ploidy", 
+    "seg", "nseg", 
+    "vcf", 
+    "jabba_rds", "jabba_gg", "ni_balanced_gg", "lp_balanced_gg", "events", "fusions",
+    "snv_somatic_vcf", "snv_germline_vcf", 
+    "variant_somatic_ann", "variant_somatic_bcf", 
+    "variant_germline_ann", "variant_germline_bcf",
+    "snv_multiplicity", 
+    "oncokb_maf", "oncokb_fusions", "oncokb_cna",
+    "sbs_signatures", "indel_signatures", "signatures_matrix", 
+    "hrdetect", "onenesstwoness"
 ]
 
 
@@ -238,6 +235,15 @@ OUTPUT_FILES_MAPPING = {
         r"picard_qc/normal/.*/.*coverage_metrics",
         r"parabricks_qc/normal/.*coverage_metrics",
 	],
+    "qc_alignment_summary": r"picard_qc/tumor/.*alignment_summary_metrics",
+    "qc_alignment_summary_tumor": r"picard_qc/tumor/.*alignment_summary_metrics",
+    "qc_alignment_summary_normal": r"picard_qc/normal/.*alignment_summary_metrics",
+    "qc_insert_size": r"picard_qc/tumor/.*insert_size_metrics",
+    "qc_insert_size_tumor": r"picard_qc/tumor/.*insert_size_metrics",
+    "qc_insert_size_normal": r"picard_qc/normal/.*insert_size_metrics",
+    "qc_coverage_metrics": r"picard_qc/tumor/.*coverage_metrics",
+    "qc_coverage_metrics_tumor": r"picard_qc/tumor/.*coverage_metrics",
+    "qc_coverage_metrics_normal": r"picard_qc/normal/.*coverage_metrics",
     "msisensorpro": r"msisensorpro/.*_report$",
     "structural_variants": [
         r"gridss/.*high_confidence_somatic\.vcf\.bgz$",
@@ -317,6 +323,11 @@ class Outputs:
 
             # Maps for columns that need to be split by status (tumor "1" vs normal "0")
             conditional_mapping = {
+                "bam": ("bam_tumor", "bam_normal"),
+                "qc_dup_rate": ("qc_dup_rate_tumor", "qc_dup_rate_normal"),
+                "qc_alignment_summary": ("qc_alignment_summary", "qc_alignment_summary_normal"),
+                "qc_insert_size": ("qc_insert_size", "qc_insert_size_normal"),
+                "qc_coverage_metrics": ("qc_coverage_metrics", "qc_coverage_metrics_normal"),
                 "frag_cov": ("frag_cov_tumor", "frag_cov_normal"),
                 "dryclean_cov": ("coverage_tumor", "coverage_normal"),
             }
@@ -325,6 +336,7 @@ class Outputs:
             direct_mapping = {
                 "sex": "sex",
                 "msi": "msisensorpro",
+                "msi_germline": "msisensorpro_germline",
                 "hets": "het_pileups",
                 "amber_dir": "amber_dir",
                 "cobalt_dir": "cobalt_dir",
@@ -368,8 +380,6 @@ class Outputs:
                         "disease": "",
                         "primary_site": "",
                         "sex": "",
-                        "bam_tumor": "",
-                        "bam_normal": "",
                     }
 
                 status = row.get("status", "").strip()
@@ -458,7 +468,11 @@ class Outputs:
                     if record.get(key):
                         break
 
-    def _collect_outputs(self, use_old_output_files_mapping = False, prefer_outputs = False) -> list:
+    def _collect_outputs(
+        self,
+        use_old_output_files_mapping = False,
+        prefer_outputs = False
+    ) -> list:
         """
         For each patient_id from the samplesheet, scan the outputs directory to find files matching
         the regex patterns defined in OUTPUT_FILES_MAPPING. For each output key, use the value from
@@ -482,63 +496,23 @@ class Outputs:
             else:
                 mapping = OUTPUT_FILES_MAPPING
                 for key, pattern in mapping.items():
-                    is_key_tumor = "_tumor" in key
-                    is_key_normal = "_normal" in key
-                    is_key_neither_tumor_normal = not is_key_tumor and not is_key_normal
-                    # if record.get(key):
-                    if not prefer_outputs and record.get(key):
+                    if record.get(key) and not prefer_outputs:
                         continue  # prefer samplesheet value if available
                     patterns = pattern if isinstance(pattern, list) else [pattern]
                     patient_dir = os.path.join(self.outputs_dir, patient_id)
-                    is_pattern_filepath_matched = False ## Initializing break conditional
-                    ## Pattern finding
                     for pat in patterns:
                         search_pattern = os.path.join(patient_dir, "**", "*")
                         for filepath in glob.glob(search_pattern, recursive=True):
                             rel_path = os.path.relpath(filepath, patient_dir)
-                            ## FIXME: hack logic is that if sample_ids is not present, return length 2 list
-                            ## with random, unmatchable strings
-                            data_sample_ids = data.get(
-                                "sample_ids", 
-                                [
-                                    "VBHWHNhrLQwyX56NDOBoMWBO", 
-                                    "dT1Z99GJSU1XT95v1vARKdOt"
-                                ]
-                            )
-                            is_tumor_sample_id_in_path = bool(re.search(data_sample_ids[0], rel_path))
-                            is_normal_sample_id_in_path = False
-                            if len(data_sample_ids) > 1:
-                            	is_normal_sample_id_in_path = bool(re.search(data_sample_ids[1], rel_path))
-                            # is_sample_id_in_path = is_tumor_sample_id_in_path or is_normal_sample_id_in_path
-                            is_sample_id_in_path = any([bool(re.search(sample_id, rel_path)) for sample_id in data_sample_ids])
-                            is_sample_id_absent_in_path = not is_sample_id_in_path
-                            is_pattern_present = bool(re.search(pat, rel_path))
-                            ## Pattern is in file path, sample_id isn't in file path
-                            is_proceed_with_first_file_match = is_pattern_present and is_sample_id_absent_in_path
-                            ## Pattern is in file path, sample_id is in file path, and key matches with the sample_id type (tumor vs normal)
-                            is_sample_id_file_matched = is_pattern_present and is_sample_id_in_path
-                            is_proceed_with_tumor_sample_id_file_match = is_sample_id_file_matched and is_tumor_sample_id_in_path and is_key_tumor
-                            is_proceed_with_normal_sample_id_file_match = is_sample_id_file_matched and is_normal_sample_id_in_path and is_key_normal
-                            ## Pattern is in file path, sample_id is in file path and is the tumor, but the column is neither tumor/normal specific
-                            ## The below will preferentially populate with the tumor (which is what we want in most cases)
-                            is_proceed_with_tumor_file_match = is_sample_id_file_matched and is_key_neither_tumor_normal and is_tumor_sample_id_in_path
-                            is_filepath_to_be_populated = (
-                                is_proceed_with_first_file_match
-                                or is_proceed_with_tumor_sample_id_file_match
-                                or is_proceed_with_normal_sample_id_file_match
-                                or is_proceed_with_tumor_file_match
-							)
-                            if is_filepath_to_be_populated:
+                            if re.search(pat, rel_path):
                                 record[key] = filepath
                                 if pat.endswith("/"):
                                     record[key] = os.path.dirname(filepath)
-                            is_key_populated = bool(record.get(key)) 
-                            if is_key_populated:
-                                is_pattern_filepath_matched = True
                                 break
-                        if is_pattern_filepath_matched:
+                        if record.get(key):
                             break
 
+            # New: Populate purity and ploidy from purple.purity.tsv (if available)
             purity_file = record["purple_pp_best_fit"]
             if purity_file:
                 with open(purity_file) as pf:
@@ -695,6 +669,7 @@ class Outputs:
             sample_rows = []
             if len(record.get("sample_ids", [])) >= 2:
                 print(f"Found paired sample for patient {record['patient_id']}, {record['sample_ids']}")
+
                 # Tumor row (status "1")
                 tumor_sample = record["sample_ids"][0] if record["sample_ids"] else ""
                 tumor_row = {
@@ -703,11 +678,12 @@ class Outputs:
                     "status": "1",
                     "sex": record.get("sex", ""),
                     "bam": record.get("bam_tumor", ""),
-                    "qc_dup_rate": record.get("qc_dup_rate_tumor", ""),
-                    "qc_insert_size": record.get("qc_insert_size_tumor", ""),
-                    "qc_alignment_summary": record.get("qc_alignment_summary_tumor", ""),
-                    "qc_coverage_metrics": record.get("qc_coverage_metrics_tumor", ""),
+                    "qc_dup_rate": record.get("qc_dup_rate", ""),
+                    "qc_alignment_summary": record.get("qc_alignment_summary", ""),
+                    "qc_insert_size": record.get("qc_insert_size", ""),
+                    "qc_coverage_metrics": record.get("qc_coverage_metrics", ""),
                     "msi": record.get("msisensorpro", ""),
+                    "msi_germline": record.get("msisensorpro_germline", ""),
                     "hets": record.get("het_pileups", ""),
                     "amber_dir": record.get("amber_dir", ""),
                     "frag_cov": record.get("frag_cov_tumor", ""),
@@ -749,8 +725,8 @@ class Outputs:
                 normal_row["status"] = "0"
                 normal_row["bam"] = record.get("bam_normal", "")
                 normal_row["qc_dup_rate"] = record.get("qc_dup_rate_normal", "")
-                normal_row["qc_insert_size"] = record.get("qc_insert_size_normal", "")
                 normal_row["qc_alignment_summary"] = record.get("qc_alignment_summary_normal", "")
+                normal_row["qc_insert_size"] = record.get("qc_insert_size_normal", "")
                 normal_row["qc_coverage_metrics"] = record.get("qc_coverage_metrics_normal", "")
                 normal_row["frag_cov"] = record.get("frag_cov_normal", "")
                 normal_row["dryclean_cov"] = record.get("coverage_normal", "")
@@ -772,10 +748,10 @@ class Outputs:
                     "status": status,
                     "sex": record.get("sex", ""),
                     "bam": bam_val,
-                    "qc_dup_rate": qc_dup_val,
-                    "qc_insert_size": qc_insert_val,
-                    "qc_alignment_summary": qc_alignment_val,
-                    "qc_coverage_metrics": qc_coverage_val,
+                    "qc_dup_rate": record.get("qc_dup_rate", ""),
+                    "qc_alignment_summary": record.get("qc_alignment_summary", ""),
+                    "qc_insert_size": record.get("qc_insert_size", ""),
+                    "qc_coverage_metrics": record.get("qc_coverage_metrics", ""),
                     "msi": record.get("msisensorpro", ""),
                     "hets": record.get("het_pileups", ""),
                     "amber_dir": record.get("amber_dir", ""),
