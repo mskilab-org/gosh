@@ -181,50 +181,62 @@ OUTPUT_FILES_MAPPING = {
         r"gatk_qc/.*/.*metrics",
         r"gatk_qc/.*metrics",
         r"markduplicates/.*metrics"
+        r"alignment/.*duplicate-metrics.txt"
 	],
     "qc_dup_rate_tumor": [
         r"gatk_qc/.*/.*metrics",
         r"gatk_qc/.*metrics",
-        r"markduplicates/.*metrics"
+        r"markduplicates/.*metrics",
+        r"alignment/tumor/.*duplicate-metrics.txt"
 	],
     "qc_dup_rate_normal": [
         r"gatk_qc/.*/.*metrics",
         r"gatk_qc/.*metrics",
-        r"markduplicates/.*metrics"
+        r"markduplicates/.*metrics",
+        r"alignment/normal/.*duplicate-metrics.txt"
 	],
     "qc_alignment_summary": [
         r"picard_qc/.*/.*alignment_summary_metrics",
         r"picard_qc/.*alignment_summary_metrics",
+        r"alignment/.*qc_metrics/alignment.txt"
 	],
     "qc_alignment_summary_tumor": [
         r"picard_qc/.*/.*alignment_summary_metrics",
-        r"picard_qc/.*alignment_summary_metrics"
+        r"picard_qc/.*alignment_summary_metrics",
+        r"alignment/tumor/.*qc_metrics/alignment.txt"
 	],
     "qc_alignment_summary_normal": [
         r"picard_qc/.*/.*alignment_summary_metrics",
-        r"picard_qc/.*alignment_summary_metrics"
+        r"picard_qc/.*alignment_summary_metrics",
+        r"alignment/normal/.*qc_metrics/alignment.txt"
 	],
     "qc_insert_size": [
         r"picard_qc/.*insert_size_metrics",
-        r"picard_qc/.*/.*insert_size_metrics"
+        r"picard_qc/.*/.*insert_size_metrics",
+        r"alignment/.*qc_metrics/insert_size.txt"
 	],
     "qc_insert_size_tumor": [
-        r"picard_qc/.*insert_size_metrics"
+        r"picard_qc/.*insert_size_metrics",
+        r"alignment/tumor/.*qc_metrics/insert_size.txt"
 	],
     "qc_insert_size_normal": [
-        r"picard_qc/.*insert_size_metrics"
+        r"picard_qc/.*insert_size_metrics",
+        r"alignment/normal/.*qc_metrics/insert_size.txt"
 	],
     "qc_coverage_metrics": [
         r"picard_qc/.*coverage_metrics",
-        r"picard_qc/.*/.*coverage_metrics"
+        r"picard_qc/.*/.*coverage_metrics",
+        r"parabricks_qc/.*coverage_metrics",
 	],
     "qc_coverage_metrics_tumor": [
         r"picard_qc/.*coverage_metrics",
-        r"picard_qc/tumor/.*/.*coverage_metrics"
+        r"picard_qc/tumor/.*/.*coverage_metrics",
+        r"parabricks_qc/tumor/.*coverage_metrics",
 	],
     "qc_coverage_metrics_normal": [
         r"picard_qc/.*coverage_metrics",
-        r"picard_qc/normal/.*/.*coverage_metrics"
+        r"picard_qc/normal/.*/.*coverage_metrics",
+        r"parabricks_qc/normal/.*coverage_metrics",
 	],
     "msisensorpro": r"msisensorpro/.*_report$",
     "structural_variants": [
