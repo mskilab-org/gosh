@@ -67,9 +67,13 @@ OUTPUT_KEYS = [
     "signatures_activities_sbs",
     "signatures_matrix_sbs",
     "signatures_decomposed_sbs",
+    "signatures_post_prob_sbs",
     "signatures_activities_indel",
     "signatures_matrix_indel",
     "signatures_decomposed_indel",
+    "signatures_post_prob_indel",
+    "ffpe_impact_vcf",
+  	"ffpe_impact_vcf_filtered",
     "hrdetect",
     "onenesstwoness",
 ]
@@ -114,10 +118,13 @@ OUTPUT_FILES_MAPPING_OLD = {
     "coverage_tumor": r"coverage/dryclean_tumor/.*/drycleaned\.cov\.rds$",
     "coverage_normal": r"coverage/dryclean_normal/.*/drycleaned\.cov\.rds$",
     "snvs_somatic": [
-        r"snv_calling/sage/somatic/.*/.*\.sage\.pass_filtered\.vcf\.gz$",
         r"snv_calling/sage/somatic/tumor_only_filter/.*/.*\.sage\.pass_filtered\.tumoronly\.vcf\.gz$",
+        r"snv_calling/sage/somatic/.*/.*\.sage\.pass_filtered\.vcf\.gz$"
     ],
-    "snvs_somatic_unfiltered": r"snv_calling/sage/somatic/.*/.*sage\.somatic\.vcf\.gz$",
+    "snvs_somatic_unfiltered": [
+        r"snv_calling/sage/somatic/.*/.*sage\.somatic\.vcf\.gz$",
+        r"snv_calling/sage/somatic/.*/.*\.sage\.pass_filtered\.vcf\.gz$"
+	],
     "snvs_germline": r"snv_calling/sage/germline/.*/.*sage\.germline\.vcf\.gz$",
     "het_pileups": [
         r"amber/.*/sites\.txt$",
@@ -168,16 +175,65 @@ OUTPUT_FILES_MAPPING = {
         r"alignment/.*\.bam$"	
 	],
     "qc_dup_rate": [
-        r"gatk_qc/tumor/.*metrics",
-        r"markduplicates/tumor/.*metrics"
+        r"gatk_qc/.*/.*metrics",
+        r"gatk_qc/.*metrics",
+        r"markduplicates/.*metrics"
+        r"alignment/.*duplicate-metrics.txt"
 	],
     "qc_dup_rate_tumor": [
-        r"gatk_qc/tumor/.*metrics",
-        r"markduplicates/tumor/.*metrics"
+        r"gatk_qc/.*/.*metrics",
+        r"gatk_qc/.*metrics",
+        r"markduplicates/.*metrics",
+        r"alignment/tumor/.*duplicate-metrics.txt"
 	],
     "qc_dup_rate_normal": [
-        r"gatk_qc/normal/.*metrics",
-        r"markduplicates/normal/.*metrics"
+        r"gatk_qc/.*/.*metrics",
+        r"gatk_qc/.*metrics",
+        r"markduplicates/.*metrics",
+        r"alignment/normal/.*duplicate-metrics.txt"
+	],
+    "qc_alignment_summary": [
+        r"picard_qc/.*/.*alignment_summary_metrics",
+        r"picard_qc/.*alignment_summary_metrics",
+        r"alignment/.*qc_metrics/alignment.txt"
+	],
+    "qc_alignment_summary_tumor": [
+        r"picard_qc/.*/.*alignment_summary_metrics",
+        r"picard_qc/.*alignment_summary_metrics",
+        r"alignment/tumor/.*qc_metrics/alignment.txt"
+	],
+    "qc_alignment_summary_normal": [
+        r"picard_qc/.*/.*alignment_summary_metrics",
+        r"picard_qc/.*alignment_summary_metrics",
+        r"alignment/normal/.*qc_metrics/alignment.txt"
+	],
+    "qc_insert_size": [
+        r"picard_qc/.*insert_size_metrics",
+        r"picard_qc/.*/.*insert_size_metrics",
+        r"alignment/.*qc_metrics/insert_size.txt"
+	],
+    "qc_insert_size_tumor": [
+        r"picard_qc/.*insert_size_metrics",
+        r"alignment/tumor/.*qc_metrics/insert_size.txt"
+	],
+    "qc_insert_size_normal": [
+        r"picard_qc/.*insert_size_metrics",
+        r"alignment/normal/.*qc_metrics/insert_size.txt"
+	],
+    "qc_coverage_metrics": [
+        r"picard_qc/.*coverage_metrics",
+        r"picard_qc/.*/.*coverage_metrics",
+        r"parabricks_qc/.*coverage_metrics",
+	],
+    "qc_coverage_metrics_tumor": [
+        r"picard_qc/.*coverage_metrics",
+        r"picard_qc/tumor/.*/.*coverage_metrics",
+        r"parabricks_qc/tumor/.*coverage_metrics",
+	],
+    "qc_coverage_metrics_normal": [
+        r"picard_qc/.*coverage_metrics",
+        r"picard_qc/normal/.*/.*coverage_metrics",
+        r"parabricks_qc/normal/.*coverage_metrics",
 	],
     "qc_alignment_summary": r"picard_qc/tumor/.*alignment_summary_metrics",
     "qc_alignment_summary_tumor": r"picard_qc/tumor/.*alignment_summary_metrics",
@@ -200,10 +256,13 @@ OUTPUT_FILES_MAPPING = {
     "coverage_tumor": r"dryclean/tumor/drycleaned\.cov\.rds$",
     "coverage_normal": r"dryclean/normal/drycleaned\.cov\.rds$",
     "snvs_somatic": [
-        r"sage/somatic/.*\.sage\.pass_filtered\.vcf\.gz$",
         r"sage/somatic/tumor_only_filter/.*\.sage\.pass_filtered\.tumoronly\.vcf\.gz$",
+        r"sage/somatic/.*\.sage\.pass_filtered\.vcf\.gz$"
     ],
-    "snvs_somatic_unfiltered": r"sage/somatic/.*sage\.somatic\.vcf\.gz$",
+    "snvs_somatic_unfiltered": [
+        r"sage/somatic/.*sage\.somatic\.vcf\.gz$",
+        r"sage/somatic/.*\.sage\.pass_filtered\.vcf\.gz$"
+	],
     "snvs_germline": r"sage/germline/.*sage\.germline\.vcf\.gz$",
     "het_pileups": r"amber/sites\.txt$",
     "amber_dir": r"amber/amber/",
@@ -231,9 +290,13 @@ OUTPUT_FILES_MAPPING = {
     "events": r"events/complex\.rds$",
     "fusions": r"fusions/fusions\.rds$",
     "signatures_activities_sbs": r"sigprofilerassignment/sbs_results/Assignment_Solution/Activities/sbs_Assignment_Solution_Activities\.txt",
+    "signatures_post_prob_sbs": r"sigprofilerassignment/sbs_results/Assignment_Solution/Activities/Decomposed_Mutation_Probabilities/Decomposed.*\.txt",
     "signatures_matrix_sbs": r"sigprofilerassignment/sig_inputs/output/SBS/sigmat_results\.SBS96\.all",
     "signatures_decomposed_sbs": r"sigprofilerassignment/sbs_results/Assignment_Solution/Activities/Decomposed_MutationType_Probabilities\.txt",
     "signatures_activities_indel": r"sigprofilerassignment/indel_results/Assignment_Solution/Activities/indel_Assignment_Solution_Activities\.txt",
+    "signatures_post_prob_indel": r"sigprofilerassignment/indel_results/Assignment_Solution/Activities/Decomposed_Mutation_Probabilities/Decomposed.*\.txt",
+    "ffpe_impact_vcf": r"ffpe_impact/.*ffpe_annotated\.vcf\.gz$",
+  	"ffpe_impact_vcf_filtered": r"ffpe_impact/.*ffpe_annotated_filtered\.vcf\.gz$",
     "signatures_matrix_indel": r"sigprofilerassignment/sig_inputs/output/ID/sigmat_results\.ID83\.all",
     "signatures_decomposed_indel": r"sigprofilerassignment/indel_results/.*/Decomposed_MutationType_Probabilities\.txt",
     "hrdetect": r"hrdetect/hrdetect_results\.rds",
@@ -521,44 +584,56 @@ class Outputs:
         Other fields are copied directly from the record (they come from the original samplesheet or outputs).
         The mapping from the output record keys to the samplesheet columns is defined as follows:
 
-            samplesheet_col     -> outputs key (or conditional):
-            patient             -> patient_id
-            sample              -> sample_ids (single value)
-            status              -> "1" for tumor, "0" for normal
-            sex                 -> sex
-            bam                 -> bam_tumor (if tumor) or bam_normal (if normal)
-            msi                 -> msisensorpro
-            hets                -> het_pileups
-            amber_dir           -> amber_dir
-            frag_cov            -> frag_cov_tumor (if tumor) or frag_cov_normal (if normal)
-            dryclean_cov        -> coverage_tumor (if tumor) or coverage_normal (if normal)
-            cobalt_dir          -> cobalt_dir
-            purity              -> purity
-            ploidy              -> ploidy
-            seg                 -> seg
-            nseg                -> nseg
-            vcf                 -> structural_variants
-            jabba_rds           -> jabba_rds
-            jabba_gg            -> jabba_gg
-            ni_balanced_gg      -> jabba_gg_balanced
-            lp_balanced_gg      -> jabba_gg_allelic
-            events              -> events
-            fusions             -> fusions
-            snv_somatic_vcf     -> snvs_somatic
-            snv_germline_vcf    -> snvs_germline
-            variant_somatic_ann -> variant_annotations_somatic_vcf
-            variant_somatic_bcf -> variant_annotations_somatic
-            variant_germline_ann-> variant_annotations_germline_vcf
-            variant_germline_bcf-> variant_annotations_germline
-            snv_multiplicity    -> multiplicity
-            oncokb_maf          -> oncokb_snv
-            oncokb_fusions      -> oncokb_fusions
-            oncokb_cna          -> oncokb_cna
-            sbs_signatures      -> signatures_activities_sbs
-            indel_signatures    -> signatures_activities_indel
-            signatures_matrix   -> signatures_matrix_sbs
-            hrdetect            -> hrdetect
-            onenesstwoness      -> onenesstwoness
+            samplesheet_col              -> outputs key (or conditional):
+            patient                      -> patient_id
+            sample                       -> sample_ids (single value)
+            status                       -> "1" for tumor, "0" for normal
+            sex                          -> sex
+            bam                          -> bam_tumor (if tumor) or bam_normal (if normal)
+            qc_dup_rate                  -> GATK EstimateLibraryComplexity
+            qc_dup_rate_tumor            -> GATK EstimateLibraryComplexity from tumor
+            qc_dup_rate_normal           -> GATK EstimateLibraryComplexity from normal
+            qc_insert_size               -> Picard CollectMultipleMetrics 
+            qc_insert_size_tumor         -> Picard CollectMultipleMetrics from tumor 
+            qc_insert_size_normal        -> Picard CollectMultipleMetrics from normal 
+            qc_alignment_summary         -> Picard CollectMultipleMetrics
+            qc_alignment_summary_tumor   -> Picard CollectMultipleMetrics from tumor
+            qc_alignment_summary_normal  -> Picard CollectMultipleMetrics from normal
+            qc_coverage_metrics          -> Picard CollectWGSMetrics
+            qc_coverage_metrics_tumor    -> Picard CollectWGSMetrics from tumor
+            qc_coverage_metrics_normal   -> Picard CollectWGSMetrics from normal
+            msi                          -> msisensorpro
+            hets                         -> het_pileups
+            amber_dir                    -> amber_dir
+            frag_cov                     -> frag_cov_tumor (if tumor) or frag_cov_normal (if normal)
+            dryclean_cov                 -> coverage_tumor (if tumor) or coverage_normal (if normal)
+            cobalt_dir                   -> cobalt_dir
+            purity                       -> purity
+            ploidy                       -> ploidy
+            seg                          -> seg
+            nseg                         -> nseg
+            vcf                          -> structural_variants
+            jabba_rds                    -> jabba_rds
+            jabba_gg                     -> jabba_gg
+            ni_balanced_gg               -> jabba_gg_balanced
+            lp_balanced_gg               -> jabba_gg_allelic
+            events                       -> events
+            fusions                      -> fusions
+            snv_somatic_vcf              -> snvs_somatic
+            snv_germline_vcf             -> snvs_germline
+            variant_somatic_ann          -> variant_annotations_somatic_vcf
+            variant_somatic_bcf          -> variant_annotations_somatic
+            variant_germline_ann         -> variant_annotations_germline_vcf
+            variant_germline_bcf         -> variant_annotations_germline
+            snv_multiplicity             -> multiplicity
+            oncokb_maf                   -> oncokb_snv
+            oncokb_fusions               -> oncokb_fusions
+            oncokb_cna                   -> oncokb_cna
+            sbs_signatures               -> signatures_activities_sbs
+            indel_signatures             -> signatures_activities_indel
+            signatures_matrix            -> signatures_matrix_sbs
+            hrdetect                     -> hrdetect
+            onenesstwoness               -> onenesstwoness
 
         Rows are generated by inspecting each record in self.outputs.
         If both bam_tumor and bam_normal are present, two rows are emitted
@@ -659,6 +734,10 @@ class Outputs:
             else:
                 status = "1"
                 bam_val = record.get("bam_tumor", "")
+                qc_dup_val = record.get("qc_dup_rate_tumor", "")
+                qc_insert_val = record.get("qc_insert_size_tumor", "")
+                qc_alignment_val = record.get("qc_alignment_summary_tumor", "")
+                qc_coverage_val = record.get("qc_coverage_metrics_tumor", "")
                 frag_cov = record.get("frag_cov_tumor", "")
                 dryclean_cov = record.get("coverage_tumor", "")
 
