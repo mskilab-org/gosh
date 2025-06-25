@@ -15,10 +15,11 @@ def run_cli():
 
 # Define the full list of tools available in the pipeline
 ALL_TOOLS = [
-    "aligner", "bamqc", "msisensorpro", "gridss", "amber", "fragcounter",
-    "dryclean", "cbs", "sage", "purple", "jabba", "non_integer_balance",
-    "lp_phased_balance", "events", "fusions", "snpeff", "snv_multiplicity",
-    "oncokb", "signatures", "hrdetect", "onenesstwoness"
+    "aligner", "collect_wgs_metrics", "collect_multiple_metrics",
+    "estimate_library_complexity", "msisensorpro", "gridss", "amber",
+    "fragcounter", "dryclean", "cbs", "sage", "purple", "jabba",
+    "non_integer_balance", "lp_phased_balance", "events", "fusions", "snpeff",
+    "snv_multiplicity", "oncokb", "signatures", "hrdetect", "onenesstwoness"
 ]
 ALL_TOOLS_STR = ",".join(ALL_TOOLS)
 
