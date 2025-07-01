@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from os import makedirs, path, getenv
 from shutil import rmtree
 from sys import exit
@@ -7,6 +8,7 @@ from subprocess import run, CalledProcessError
 import click
 from ..core.module_loader import get_environment_defaults
 from ..utils.datasets import convert_to_datasets_path
+
 
 @click.group(name='run')
 def run_cli():
@@ -22,7 +24,11 @@ ALL_TOOLS = [
 ]
 ALL_TOOLS_STR = ",".join(ALL_TOOLS)
 
-@run_cli.command()
+@run_cli.command(
+    context_settings = dict(
+        ignore_unknown_options=True
+    )
+)
 @click.option('--pipeline-dir',
               help='Path to nf-gos pipeline repo')
 @click.option('--samplesheet',
@@ -57,6 +63,9 @@ ALL_TOOLS_STR = ",".join(ALL_TOOLS)
               help='Preset option: "default" (all tools), "jabba", "hrd", or "heme"')
 @click.option('--oncokb-api-key',
               help='OncoKB API key for accessing OncoKB annotations. Required if using OncoKB')
+@click.option('--config',
+              help='Additional config files', multiple=True)
+@click.argument('extra_args', nargs=-1, type=click.UNPROCESSED)
 def pipeline(
     pipeline_dir,
     samplesheet,
@@ -70,7 +79,9 @@ def pipeline(
     skip_tools,
     include_tools,
     preset,
-    oncokb_api_key
+    oncokb_api_key,
+    config,
+    extra_args
 ):
     # Validate mutually exclusive options
     if skip_tools and include_tools:
@@ -84,6 +95,12 @@ def pipeline(
     from ..core.nextflow_log import get_entries_with_process_names, get_entries_with_sample_names
     from ..core.module_loader import load_required_modules # Keep this specific import if needed elsewhere
 
+    for arg in extra_args:
+        if not arg.startswith('--') and not arg.startswith('-'):
+            raise f"Argument {arg} provided is not parsable"
+    
+    
+    
     # Retrieve environment defaults - already imported above
     env_defaults = get_environment_defaults()
 
@@ -258,21 +275,30 @@ def pipeline(
     load_modules_command = load_required_modules(env_defaults)
 
     runner = NextflowRunner()
+    
+    
 
     command = (
         f"{load_modules_command} "
         f"{runner.cmd} secrets set ONCOKB_API_KEY {oncokb_api_key} && "
-        f"{runner.cmd} -log .nextflow_{runner.get_timestamp()}.log "
+        f"{runner.cmd} "
+        f'{" -c ".join(config)}'
+        f"-log .nextflow_{runner.get_timestamp()}.log "
         f"run {pipeline_dir} "
         f"-params-file {params_file} "
         f"-profile {profile} "
         f"-with-report report_{runner.get_timestamp()}.html "
         f"-with-trace"
+        # f"-dump-hashes "
     )
 
     if resume:
         command += " -resume"
+    
+    if not extra_args is None and not len(extra_args) == 0:
+        command += f' {" ".join(extra_args)} '
 
+    print(f"command to run: {command}")
     runner.run(command)
 
 
