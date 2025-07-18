@@ -5,7 +5,8 @@ from .samplesheet import check_if_tumor_only
 
 genome_map = {
     'hg19': 'GATK.GRCh37',
-    'hg38': 'GATK.GRCh38'
+    'hg38': 'GATK.GRCh38',
+    'wmg-hg38': 'WMG-hg38'
 }
 def create_params_file(
     preset="default",
@@ -65,7 +66,8 @@ def create_params_file(
         "default": "",
         "jabba": "sage,snpeff,snv_multiplicity,signatures,hrdetect",
         "hrd": "non_integer_balance,lp_phased_balance,events,fusions",
-        "heme": "msisensorpro,hrdetect,onenesstwoness"
+        "heme": "msisensorpro,hrdetect,onenesstwoness",
+        "taps": "non_integer_balance,lp_phased_balance"
     }
 
     if preset != "default":
@@ -88,14 +90,14 @@ def create_params_file(
     # Prompt for genome
     if not genome in genome_map.values():
         genome_prompt = (
-            f"Enter genome [default: hg19] (options: hg19, hg38) (Press Enter to use default): "
+            f"Enter genome [default: hg19] (options: hg19, hg38, wmg-hg38) (Press Enter to use default): "
         )
         genome_input = input(genome_prompt).strip() or "hg19"
         genome = genome_map.get(genome_input.lower())
 
-    if not genome == "GATK.GRCh37" and not genome == "GATK.GRCh38":
+    if not genome in ["GATK.GRCh37", "GATK.GRCh38", "WMG-hg38"]:
         print(f"Warning: Invalid genome '{genome_input}'. Using default '{default_genome}'.")
-        genome = genome_map[default_genome]
+        genome = default_genome
 
     # Prompt for email
     email_prompt = f"Enter email address [{default_email}] (Press Enter to skip): "

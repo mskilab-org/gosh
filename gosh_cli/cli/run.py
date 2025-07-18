@@ -156,7 +156,7 @@ def pipeline(
     params_data["outdir"] = outdir
 
     # Convert the provided reference to the corresponding genome value
-    genome_map = {"hg19": "GATK.GRCh37", "hg38": "GATK.GRCh38"}
+    genome_map = {"hg19": "GATK.GRCh37", "hg38": "GATK.GRCh38", "wmg-hg38": "WMG-hg38"}
     params_data["genome"] = genome_map.get(reference, "GATK.GRCh37")
 
     # Also update skip_tools if a skip_tools value was computed
