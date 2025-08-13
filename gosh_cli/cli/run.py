@@ -95,9 +95,9 @@ def pipeline(
     from ..core.nextflow_log import get_entries_with_process_names, get_entries_with_sample_names
     from ..core.module_loader import load_required_modules # Keep this specific import if needed elsewhere
 
-    for arg in extra_args:
-        if not arg.startswith('--') and not arg.startswith('-'):
-            raise f"Argument {arg} provided is not parsable"
+    # for arg in extra_args:
+    #     if not arg.startswith('--') and not arg.startswith('-'):
+    #         raise f"Argument {arg} provided is not parsable"
     
     
     
@@ -275,14 +275,28 @@ def pipeline(
     load_modules_command = load_required_modules(env_defaults)
 
     runner = NextflowRunner()
+        
+    # configs = " ".join([f'-c {conf}' for conf in config])
     
+    configs_lst = []
+    for conf in config:
+        is_conf_absolute_path = conf.startswith("/") 
+        is_conf_user_path = conf.startswith("~")
+        is_conf_path_resolved = is_conf_absolute_path or is_conf_user_path
+        conf = os.path.expanduser(conf) if is_conf_user_path else conf
+        out_conf = conf if is_conf_path_resolved else pipeline_dir + "/conf/settings/" + conf
+        if not os.path.exists(out_conf):
+            print(f'{out_conf} does not exist!')
+            next
+        configs_lst.append(out_conf)
+        
+    configs = " ".join([f'-c {resolved_config}' for resolved_config in configs_lst])
     
-
     command = (
         f"{load_modules_command} "
         f"{runner.cmd} secrets set ONCOKB_API_KEY {oncokb_api_key} && "
         f"{runner.cmd} "
-        f'{" -c ".join(config)}'
+        f'{configs} '
         f"-log .nextflow_{runner.get_timestamp()}.log "
         f"run {pipeline_dir} "
         f"-params-file {params_file} "
