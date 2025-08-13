@@ -19,6 +19,7 @@ def get_environment_defaults():
     }
     mapping = {
         'fn-': nyu_defaults,
+        'fn2-': nyu_defaults,
         'a100-': nyu_defaults,
         'a40-': nyu_defaults,
         'cn-': nyu_defaults,
