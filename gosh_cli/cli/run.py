@@ -172,8 +172,22 @@ def pipeline(
     params_data["outdir"] = outdir
 
     # Convert the provided reference to the corresponding genome value
-    genome_map = {"hg19": "GATK.GRCh37", "hg38": "GATK.GRCh38"}
-    params_data["genome"] = genome_map.get(reference, "GATK.GRCh37")
+    genome_map = {
+        "hg19": "GATK.GRCh37", 
+        "GATK.GRCh37": "GATK.GRCh37", 
+        "GRCh37": "GATK.GRCh37", 
+        "grch37": "GATK.GRCh37",
+        "hg38": "GATK.GRCh38", 
+        "GATK.GRCh38": "GATK.GRCh38", 
+        "GRCh38": "GATK.GRCh38", 
+        "grch38": "GATK.GRCh38", 
+        "wmg-hg38": "WMG-hg38",
+        "WMG-hg38": "WMG-hg38"
+    }
+    genome_retrieved = genome_map.get(reference, None)
+    if genome_retrieved is None:
+        raise ValueError("reference/genome must be one of hg19, GRCh37, GATK.GRCh37, hg38, GRCh38, or GATK.GRCh38")
+    params_data["genome"] = genome_retrieved
 
     # Also update skip_tools if a skip_tools value was computed
     if skip_tools_value is not None:
