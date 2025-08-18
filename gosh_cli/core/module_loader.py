@@ -15,7 +15,7 @@ def get_environment_defaults():
         'profile': "nygc",
         'nextflow_module': "nextflow/23.10.0",
         'aws_module': 'awscli',
-        'JAVA_HOME': '/nfs/sw/java/jdk-17.0.4'
+        'JAVA_HOME': '/nfs/sw/easybuild/software/Java/17.0.6',
     }
     mapping = {
         'fn-': nyu_defaults,
@@ -57,8 +57,9 @@ def load_required_modules(env_defaults):
 
     # Check for 'aws' command
     if shutil.which('aws') is None:
-        modules_to_load.append(env_defaults.get('aws_module', 'aws-cli'))
-        print(f"'aws' command not found. Loading module '{env_defaults.get('aws_module', 'aws-cli')}'.")
+        aws_module = env_defaults.get('aws_module', 'aws-cli')
+        modules_to_load.append(aws_module)
+        print(f"'aws' command not found. Loading module '{aws_module}'.")
     else:
         print("'aws' command is already available.")
 

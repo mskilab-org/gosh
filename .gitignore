@@ -4,3 +4,4 @@ spec.md
 .aider*
 *.csv
 dist/
+build/
