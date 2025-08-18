@@ -8,6 +8,7 @@ from subprocess import run, CalledProcessError
 import click
 from ..core.module_loader import get_environment_defaults
 from ..utils.datasets import convert_to_datasets_path
+from ..settings import GENOME_MAP as genome_map
 
 
 @click.group(name='run')
@@ -173,18 +174,18 @@ def pipeline(
     params_data["outdir"] = outdir
 
     # Convert the provided reference to the corresponding genome value
-    genome_map = {
-        "hg19": "GATK.GRCh37", 
-        "GATK.GRCh37": "GATK.GRCh37", 
-        "GRCh37": "GATK.GRCh37", 
-        "grch37": "GATK.GRCh37",
-        "hg38": "GATK.GRCh38", 
-        "GATK.GRCh38": "GATK.GRCh38", 
-        "GRCh38": "GATK.GRCh38", 
-        "grch38": "GATK.GRCh38", 
-        "wmg-hg38": "WMG-hg38",
-        "WMG-hg38": "WMG-hg38"
-    }
+    # genome_map = {
+    #     "hg19": "GATK.GRCh37", 
+    #     "GATK.GRCh37": "GATK.GRCh37", 
+    #     "GRCh37": "GATK.GRCh37", 
+    #     "grch37": "GATK.GRCh37",
+    #     "hg38": "GATK.GRCh38", 
+    #     "GATK.GRCh38": "GATK.GRCh38", 
+    #     "GRCh38": "GATK.GRCh38", 
+    #     "grch38": "GATK.GRCh38", 
+    #     "wmg-hg38": "WMG-hg38",
+    #     "WMG-hg38": "WMG-hg38"
+    # }
     genome_retrieved = genome_map.get(reference, None)
     if genome_retrieved is None:
         raise ValueError("reference/genome must be one of hg19, GRCh37, GATK.GRCh37, hg38, GRCh38, or GATK.GRCh38")
