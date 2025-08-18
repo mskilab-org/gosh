@@ -104,8 +104,9 @@ def create_params_file(
         genome = genome_map.get(genome_input.lower())
 
     if not genome in ["GATK.GRCh37", "GATK.GRCh38", "WMG-hg38"]:
-        print(f"Warning: Invalid genome '{genome_input}'. Using default '{default_genome}'.")
-        genome = default_genome
+        raise ValueError("genome provided not valid")
+        # print(f"Warning: Invalid genome '{genome_input}'. Using default '{default_genome}'.")
+        # genome = default_genome
 
     # Prompt for email
     email_prompt = f"Enter email address [{default_email}] (Press Enter to skip): "
