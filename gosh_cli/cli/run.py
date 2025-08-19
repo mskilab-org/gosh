@@ -185,7 +185,7 @@ def pipeline(
     if is_genome_still_not_set:
         raise ValueError(errmsg)
     
-    is_genome_invalid = genome_map.get(genome_retrieved, None) is None
+    is_genome_invalid = genome_map.get(genome_retrieved.lower(), None) is None
     if is_genome_invalid:
         raise ValueError(errmsg)
 
