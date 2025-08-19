@@ -807,7 +807,9 @@ class Outputs:
                     "indel_signatures": record.get("signatures_activities_indel", ""),
                     "signatures_matrix": record.get("signatures_matrix_sbs", ""),
                     "hrdetect": record.get("hrdetect", ""),
-                    "onenesstwoness": record.get("onenesstwoness", "")
+                    "onenesstwoness": record.get("onenesstwoness", ""),
+                    "conpair_concordance": record.get("conpair_concordance", ""),
+                    "conpair_contamination": record.get("conpair_contamination", "")
                 })
 
             for row in sample_rows:
