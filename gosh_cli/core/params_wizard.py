@@ -100,7 +100,7 @@ def create_params_file(
         genome_prompt = (
             f"Enter genome [default: hg19] (options: hg19, hg38, wmg-hg38) (Press Enter to use default): "
         )
-        genome_input = input(genome_prompt).strip() or "hg19"
+        genome_input = input(genome_prompt).strip()
         genome = genome_map.get(genome_input.lower())
 
     if not genome in ["GATK.GRCh37", "GATK.GRCh38", "WMG-hg38"]:

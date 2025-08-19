@@ -118,11 +118,14 @@ def pipeline(
     makedirs(reference, exist_ok=True)
 
     # Check if params_file is provided and exists
-    if not path.isfile(params_file):
+    is_params_file_found = path.isfile(params_file)
+    default_params = './params.json'
+    is_default_params_file_found = path.isfile(default_params)
+    if not is_params_file_found:
         print(f"Parameters file '{params_file}' not found.")
         # Check if default params.json exists
         default_params = './params.json'
-        if not path.isfile(default_params):
+        if not is_default_params_file_found:
             print("No params.json file found. Launching wizard to create one...")
             # Call the wizard to create params.json with the preset supplied in the run command
             create_params_file(
@@ -174,22 +177,17 @@ def pipeline(
     params_data["outdir"] = outdir
 
     # Convert the provided reference to the corresponding genome value
-    # genome_map = {
-    #     "hg19": "GATK.GRCh37", 
-    #     "GATK.GRCh37": "GATK.GRCh37", 
-    #     "GRCh37": "GATK.GRCh37", 
-    #     "grch37": "GATK.GRCh37",
-    #     "hg38": "GATK.GRCh38", 
-    #     "GATK.GRCh38": "GATK.GRCh38", 
-    #     "GRCh38": "GATK.GRCh38", 
-    #     "grch38": "GATK.GRCh38", 
-    #     "wmg-hg38": "WMG-hg38",
-    #     "WMG-hg38": "WMG-hg38"
-    # }
-    genome_retrieved = genome_map.get(reference, None)
-    if genome_retrieved is None:
-        raise ValueError("reference/genome must be one of hg19, GRCh37, GATK.GRCh37, hg38, GRCh38, or GATK.GRCh38")
-    params_data["genome"] = genome_retrieved
+    genome_retrieved = params_data.get("genome", None)
+    
+    is_genome_still_not_set = genome_retrieved is None
+    errmsg = f"reference/genome must be one of hg19, GRCh37, GATK.GRCh37, hg38, GRCh38, or GATK.GRCh38 in {params_file}"
+    
+    if is_genome_still_not_set:
+        raise ValueError(errmsg)
+    
+    is_genome_invalid = genome_map.get(genome_retrieved, None) is None
+    if is_genome_invalid:
+        raise ValueError(errmsg)
 
     # Also update skip_tools if a skip_tools value was computed
     if skip_tools_value is not None:
