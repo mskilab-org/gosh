@@ -379,7 +379,9 @@ class Outputs:
                 "indel_signatures": "signatures_activities_indel",
                 "signatures_matrix": "signatures_matrix_sbs",
                 "hrdetect": "hrdetect",
-                "onenesstwoness": "onenesstwoness"
+                "onenesstwoness": "onenesstwoness",
+                "conpair_concordance": "conpair_concordance",
+                "conpair_contamination": "conpair_contamination"
             }
 
             for row in reader:
@@ -733,7 +735,9 @@ class Outputs:
                     "indel_signatures": record.get("signatures_activities_indel", ""),
                     "signatures_matrix": record.get("signatures_matrix_sbs", ""),
                     "hrdetect": record.get("hrdetect", ""),
-                    "onenesstwoness": record.get("onenesstwoness", "")
+                    "onenesstwoness": record.get("onenesstwoness", ""),
+                    "conpair_concordance": record.get("conpair_concordance", ""),
+                    "conpair_contamination": record.get("conpair_contamination", "")
                 }
                 sample_rows.append(tumor_row)
 
