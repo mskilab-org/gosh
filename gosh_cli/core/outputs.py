@@ -504,8 +504,20 @@ class Outputs:
             record["sample_ids"] = data.get("sample_ids", [])
             ## FIXME: Assuming that sample ids is a length 2 list,
             ## where tumor id always goes first (encoded by _read_samplesheet)
-            record["tumor_sample"] = data.get("sample_ids", [""])[0]
-            record["normal_sample"] = data.get("sample_ids", [""])[1]
+            sample_ids = data.get("sample_ids", [])
+            ln = len(sample_ids)
+            is_paired = ln == 2
+            is_empty = ln == 0
+            is_invalid = ln > 2
+            
+            if is_invalid:
+                print(sampleids)
+                raise ValueError("More than one sample id found - not supported yet")
+            
+            if not is_empty:
+                record["tumor_sample"] = sample_ids[0]
+            if is_paired:
+                record["normal_sample"] = sample_ids[1]
 
             # Overwrite with top-level keys where provided
             for key in data.keys():
