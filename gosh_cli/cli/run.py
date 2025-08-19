@@ -65,7 +65,7 @@ ALL_TOOLS_STR = ",".join(ALL_TOOLS)
               help='Preset option: "default" (all tools), "jabba", "hrd", or "heme"')
 @click.option('--oncokb-api-key',
               help='OncoKB API key for accessing OncoKB annotations. Required if using OncoKB')
-@click.option('--config',
+@click.option('-c', '--config', "--configs", "config",
               help='Additional config files', multiple=True)
 @click.argument('extra_args', nargs=-1, type=click.UNPROCESSED)
 def pipeline(

@@ -9,6 +9,8 @@ from typing import Optional, List
 OUTPUT_KEYS = [
     "patient_id",
     "sample_ids",
+    "tumor_sample",
+    "normal_sample",
     "tumor_type",
     "disease",
     "primary_site",
@@ -31,6 +33,7 @@ OUTPUT_KEYS = [
     "msisensorpro_germline",
     "structural_variants",
     "structural_variants_unfiltered",
+    "structural_variants_raw",
     "frag_cov_tumor",
     "frag_cov_normal",
     "coverage_tumor",
@@ -91,7 +94,7 @@ SAMPLESHEET_FIELDNAMES = [
     "frag_cov", "dryclean_cov",
     "cobalt_dir", "purity", "ploidy", 
     "seg", "nseg", 
-    "vcf", 
+    "vcf", "vcf_raw",
     "jabba_rds", "jabba_gg", "ni_balanced_gg", "lp_balanced_gg", "events", "fusions",
     "snv_somatic_vcf", "snv_germline_vcf", 
     "variant_somatic_ann", "variant_somatic_bcf", 
@@ -250,15 +253,6 @@ OUTPUT_FILES_MAPPING = {
         r"parabricks_qc/normal/.*coverage_metrics",
         r"parabricks/.*coverage_metrics"
 	],
-    "qc_alignment_summary": r"picard_qc/tumor/.*alignment_summary_metrics",
-    "qc_alignment_summary_tumor": r"picard_qc/tumor/.*alignment_summary_metrics",
-    "qc_alignment_summary_normal": r"picard_qc/normal/.*alignment_summary_metrics",
-    "qc_insert_size": r"picard_qc/tumor/.*insert_size_metrics",
-    "qc_insert_size_tumor": r"picard_qc/tumor/.*insert_size_metrics",
-    "qc_insert_size_normal": r"picard_qc/normal/.*insert_size_metrics",
-    "qc_coverage_metrics": r"picard_qc/tumor/.*coverage_metrics",
-    "qc_coverage_metrics_tumor": r"picard_qc/tumor/.*coverage_metrics",
-    "qc_coverage_metrics_normal": r"picard_qc/normal/.*coverage_metrics",
     "msisensorpro": r"msisensorpro/.*_report$",
     "structural_variants": [
         r"gridss/.*high_confidence_somatic\.vcf\.bgz$",
@@ -266,6 +260,7 @@ OUTPUT_FILES_MAPPING = {
         r"gridss/.*somatic\.filtered\.sv\.rds$",
     ],
     "structural_variants_unfiltered": r"gridss.*/.*\.gridss\.filtered\.vcf\.gz$",
+    "structural_variants_raw": r"gridss.*/.*\.gridss\.vcf\.gz$",
     "frag_cov_tumor": r"fragcounter/tumor/cov\.rds$",
     "frag_cov_normal": r"fragcounter/normal/cov\.rds$",
     "coverage_tumor": r"dryclean/tumor/drycleaned\.cov\.rds$",
@@ -363,6 +358,7 @@ class Outputs:
                 "seg": "seg",
                 "nseg": "nseg",
                 "vcf": "structural_variants",
+                "vcf_raw": "structural_variants_raw",
                 "jabba_rds": "jabba_rds",
                 "jabba_gg": "jabba_gg",
                 "ni_balanced_gg": "jabba_gg_balanced",
@@ -383,7 +379,7 @@ class Outputs:
                 "indel_signatures": "signatures_activities_indel",
                 "signatures_matrix": "signatures_matrix_sbs",
                 "hrdetect": "hrdetect",
-                "onenesstwoness": "onenesstwoness",
+                "onenesstwoness": "onenesstwoness"
             }
 
             for row in reader:
@@ -504,6 +500,10 @@ class Outputs:
             record["patient_id"] = patient_id
             # use the sample id for old mapping
             record["sample_ids"] = data.get("sample_ids", [])
+            ## FIXME: Assuming that sample ids is a length 2 list,
+            ## where tumor id always goes first (encoded by _read_samplesheet)
+            record["tumor_sample"] = data.get("sample_ids", [""])[0]
+            record["normal_sample"] = data.get("sample_ids", [""])[1]
 
             # Overwrite with top-level keys where provided
             for key in data.keys():
@@ -712,6 +712,7 @@ class Outputs:
                     "seg": record.get("seg", ""),
                     "nseg": record.get("nseg", ""),
                     "vcf": record.get("structural_variants", ""),
+                    "vcf_raw": record.get("structural_variants_raw", ""),
                     "jabba_rds": record.get("jabba_rds", ""),
                     "jabba_gg": record.get("jabba_gg", ""),
                     "ni_balanced_gg": record.get("jabba_gg_balanced", ""),
@@ -781,6 +782,7 @@ class Outputs:
                     "seg": record.get("seg", ""),
                     "nseg": record.get("nseg", ""),
                     "vcf": record.get("structural_variants", ""),
+                    "vcf_raw": record.get("structural_variants_raw", ""),
                     "jabba_rds": record.get("jabba_rds", ""),
                     "jabba_gg": record.get("jabba_gg", ""),
                     "ni_balanced_gg": record.get("jabba_gg_balanced", ""),

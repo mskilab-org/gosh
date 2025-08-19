@@ -96,12 +96,11 @@ def create_params_file(
             preset_used = "default"
 
     # Prompt for genome
-    if not genome in genome_map.values():
-        genome_prompt = (
-            f"Enter genome [default: hg19] (options: hg19, hg38, wmg-hg38) (Press Enter to use default): "
-        )
-        genome_input = input(genome_prompt).strip()
-        genome = genome_map.get(genome_input.lower())
+    genome_prompt = (
+        f"Enter genome [default: hg19] (options: hg19, hg38, wmg-hg38) (Press Enter to use default): "
+    )
+    genome_input = input(genome_prompt).strip() or "hg19"
+    genome = genome_map.get(genome_input.lower())
 
     if not genome in ["GATK.GRCh37", "GATK.GRCh38", "WMG-hg38"]:
         raise ValueError("genome provided not valid")
