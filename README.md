@@ -1,9 +1,11 @@
 # gOSh
 
-A CLI for the [nf-gOS](https://github.com/mskilab-org/nf-gos) pipeline.
+A CLI for the [nf-gOS](https://github.com/mskilab-org/nf-gos) nextflow pipeline. **Use gOSh to run nf-gOS.** While nf-gOS can be run directly through nextflow commands, this CLI simplifies the process and provides a framework to load in environments necessary to process tumor whole genome sequencing through nf-gOS.
 
 ## Quickstart
-1. `gosh run pipeline` to run the nf-gos pipeline (make sure to provide a samplesheet)
+1. In bash, `cd nf_gos_run_directory`.
+2. Provide a `samplesheet.csv` in `nf_gos_run_directory`.
+1. Enter `gosh run pipeline` to run the nf-gos pipeline (make sure to provide a samplesheet). The first time a pipeline is run, a wizard will prompt the user through essential settings (like reference assembly, and predefined configurations — i.e. presets).
   - If you want to run only the JaBbA pipeline, use `gosh run pipeline --preset jabba`
   - If you want to run only the HRD classifier pipeline, use `gosh run pipeline --preset hrd`
 2. `gosh run skilift` to convert the pipeline outputs into something ingestible by the gOS frontend
