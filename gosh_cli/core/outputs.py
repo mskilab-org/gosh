@@ -102,7 +102,7 @@ SAMPLESHEET_FIELDNAMES = [
     "snv_multiplicity", 
     "oncokb_maf", "oncokb_fusions", "oncokb_cna",
     "sbs_signatures", "indel_signatures", "signatures_matrix", 
-    "hrdetect", "onenesstwoness"
+    "hrdetect", "onenesstwoness", "conpair_concordance", "conpair_contamination"
 ]
 
 
