@@ -537,20 +537,61 @@ class Outputs:
             else:
                 mapping = OUTPUT_FILES_MAPPING
                 for key, pattern in mapping.items():
-                    if record.get(key) and not prefer_outputs:
+                    is_key_tumor = "_tumor" in key
+                    is_key_normal = "_normal" in key
+                    is_key_neither_tumor_normal = not is_key_tumor and not is_key_normal
+                    # if record.get(key):
+                    if not prefer_outputs and record.get(key):
                         continue  # prefer samplesheet value if available
                     patterns = pattern if isinstance(pattern, list) else [pattern]
                     patient_dir = os.path.join(self.outputs_dir, patient_id)
+                    is_pattern_filepath_matched = False ## Initializing break conditional
+                    ## Pattern finding
                     for pat in patterns:
                         search_pattern = os.path.join(patient_dir, "**", "*")
                         for filepath in glob.glob(search_pattern, recursive=True):
                             rel_path = os.path.relpath(filepath, patient_dir)
-                            if re.search(pat, rel_path):
+                            ## FIXME: hack logic is that if sample_ids is not present, return length 2 list
+                            ## with random, unmatchable strings
+                            data_sample_ids = data.get(
+                                "sample_ids", 
+                                [
+                                    "VBHWHNhrLQwyX56NDOBoMWBO", 
+                                    "dT1Z99GJSU1XT95v1vARKdOt"
+                                ]
+                            )
+                            is_tumor_sample_id_in_path = bool(re.search(data_sample_ids[0], rel_path))
+                            is_normal_sample_id_in_path = False
+                            if len(data_sample_ids) > 1:
+                            	is_normal_sample_id_in_path = bool(re.search(data_sample_ids[1], rel_path))
+                            # is_sample_id_in_path = is_tumor_sample_id_in_path or is_normal_sample_id_in_path
+                            is_sample_id_in_path = any([bool(re.search(sample_id, rel_path)) for sample_id in data_sample_ids])
+                            is_sample_id_absent_in_path = not is_sample_id_in_path
+                            is_pattern_present = bool(re.search(pat, rel_path))
+                            ## Pattern is in file path, sample_id isn't in file path
+                            is_proceed_with_first_file_match = is_pattern_present and is_sample_id_absent_in_path
+                            ## Pattern is in file path, sample_id is in file path, and key matches with the sample_id type (tumor vs normal)
+                            is_sample_id_file_matched = is_pattern_present and is_sample_id_in_path
+                            is_proceed_with_tumor_sample_id_file_match = is_sample_id_file_matched and is_tumor_sample_id_in_path and is_key_tumor
+                            is_proceed_with_normal_sample_id_file_match = is_sample_id_file_matched and is_normal_sample_id_in_path and is_key_normal
+                            ## Pattern is in file path, sample_id is in file path and is the tumor, but the column is neither tumor/normal specific
+                            ## The below will preferentially populate with the tumor (which is what we want in most cases)
+                            is_proceed_with_tumor_file_match = is_sample_id_file_matched and is_key_neither_tumor_normal and is_tumor_sample_id_in_path
+                            is_filepath_to_be_populated = (
+                                is_proceed_with_first_file_match
+                                or is_proceed_with_tumor_sample_id_file_match
+                                or is_proceed_with_normal_sample_id_file_match
+                                or is_proceed_with_tumor_file_match
+							)
+                            if is_filepath_to_be_populated:
                                 record[key] = filepath
                                 if pat.endswith("/"):
                                     record[key] = os.path.dirname(filepath)
+                            is_key_populated = bool(record.get(key)) 
+                            if is_key_populated:
+                                is_pattern_filepath_matched = True
                                 break
-                        if record.get(key):
+                        if is_pattern_filepath_matched:
                             break
 
             # New: Populate purity and ploidy from purple.purity.tsv (if available)
