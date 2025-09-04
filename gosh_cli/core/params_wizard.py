@@ -124,9 +124,9 @@ def create_params_file(
     if preset_used == "heme":
         print("Adding heme specific parameters...")
         params.update({
-            "is_retier_whitelist_junctions": "true",
-            "purple_use_svs": "false",
-            "purple_use_smlvs": "false",
+            "is_retier_whitelist_junctions": True,
+            "purple_use_svs": False,
+            "purple_use_smlvs": False,
             "purple_highly_diploid_percentage": 1.0,
             "purple_min_purity": 0.25,
             "purple_ploidy_penalty_factor": 0.6
