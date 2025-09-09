@@ -83,6 +83,13 @@ gosh run pipeline --preset heme     # Hematological cancers
 gosh run pipeline --preset ffpe     # FFPE chimera artifacts and FFPE small mutation artifacts filtered
 ```
 
+**For NYU Imielinski Lab Users:**
+```bash
+. ~/scripts/load_gosh
+cd path_to_run_directory_where_samplesheet_is
+gosh run pipeline
+```
+
 ---
 
 ### 3. Collect Outputs: `gosh run outputs`
