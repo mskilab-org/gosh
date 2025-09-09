@@ -95,6 +95,7 @@ SAMPLESHEET_FIELDNAMES = [
     "cobalt_dir", "purple_pp_best_fit", "purple_pp_range", "purity", "ploidy", 
     "seg", "nseg", 
     "vcf", "vcf_raw",
+    "structural_variants_chimera_filtered", "structural_variants_raw_chimera_filtered",
     "jabba_rds", "jabba_gg", "ni_balanced_gg", "lp_balanced_gg", "events", "fusions",
     "snv_somatic_vcf", "snv_germline_vcf", 
     "variant_somatic_ann", "variant_somatic_bcf", 
@@ -186,7 +187,7 @@ OUTPUT_FILES_MAPPING = {
     "qc_dup_rate": [
         r"gatk_qc/.*/.*metrics",
         r"gatk_qc/.*metrics",
-        r"markduplicates/.*metrics"
+        r"markduplicates/.*metrics",
         r"alignment/.*duplicate-metrics.txt",
         r"parabricks/.*duplicate-metrics.txt"
 	],
@@ -264,6 +265,8 @@ OUTPUT_FILES_MAPPING = {
     ],
     "structural_variants_unfiltered": r"gridss.*/.*\.gridss\.filtered\.vcf\.gz$",
     "structural_variants_raw": r"gridss.*/.*\.gridss\.vcf\.gz$",
+    "structural_variants_chimera_filtered": r"sv_chimera_filter.*/.*\.filtered.ffpe_filtered\.vcf\.gz$",
+    "structural_variants_raw_chimera_filtered": r"sv_chimera_filter.*/(?!.*\.filtered\.).*\.ffpe_filtered\.vcf\.gz$",
     "frag_cov_tumor": r"fragcounter/tumor/cov\.rds$",
     "frag_cov_normal": r"fragcounter/normal/cov\.rds$",
     "coverage_tumor": r"dryclean/tumor/drycleaned\.cov\.rds$",
@@ -341,7 +344,7 @@ class Outputs:
             # Maps for columns that need to be split by status (tumor "1" vs normal "0")
             conditional_mapping = {
                 "bam": ("bam_tumor", "bam_normal"),
-                "qc_dup_rate": ("qc_dup_rate_tumor", "qc_dup_rate_normal"),
+                "qc_dup_rate": ("qc_dup_rate", "qc_dup_rate_normal"),
                 "qc_alignment_summary": ("qc_alignment_summary", "qc_alignment_summary_normal"),
                 "qc_insert_size": ("qc_insert_size", "qc_insert_size_normal"),
                 "qc_coverage_metrics": ("qc_coverage_metrics", "qc_coverage_metrics_normal"),
@@ -363,6 +366,8 @@ class Outputs:
                 "nseg": "nseg",
                 "vcf": "structural_variants",
                 "vcf_raw": "structural_variants_raw",
+                "structural_variants_chimera_filtered": "structural_variants_chimera_filtered",
+                "structural_variants_raw_chimera_filtered": "structural_variants_raw_chimera_filtered",
                 "jabba_rds": "jabba_rds",
                 "jabba_gg": "jabba_gg",
                 "ni_balanced_gg": "jabba_gg_balanced",
@@ -779,6 +784,8 @@ class Outputs:
                     "nseg": record.get("nseg", ""),
                     "vcf": record.get("structural_variants", ""),
                     "vcf_raw": record.get("structural_variants_raw", ""),
+                    "structural_variants_chimera_filtered": record.get("structural_variants_chimera_filtered", ""),
+                    "structural_variants_raw_chimera_filtered": record.get("structural_variants_raw_chimera_filtered", ""),
                     "jabba_rds": record.get("jabba_rds", ""),
                     "jabba_gg": record.get("jabba_gg", ""),
                     "ni_balanced_gg": record.get("jabba_gg_balanced", ""),
@@ -856,6 +863,8 @@ class Outputs:
                     "nseg": record.get("nseg", ""),
                     "vcf": record.get("structural_variants", ""),
                     "vcf_raw": record.get("structural_variants_raw", ""),
+                    "structural_variants_chimera_filtered": record.get("structural_variants_chimera_filtered", ""),
+                    "structural_variants_raw_chimera_filtered": record.get("structural_variants_raw_chimera_filtered", ""),
                     "jabba_rds": record.get("jabba_rds", ""),
                     "jabba_gg": record.get("jabba_gg", ""),
                     "ni_balanced_gg": record.get("jabba_gg_balanced", ""),
