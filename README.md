@@ -80,6 +80,7 @@ gosh run pipeline --pipeline-dir ~/my-fork/nf-gos
 gosh run pipeline --preset jabba    # JaBbA analysis only
 gosh run pipeline --preset hrd      # HRD classification
 gosh run pipeline --preset heme     # Hematological cancers
+gosh run pipeline --preset ffpe     # FFPE chimera artifacts and FFPE small mutation artifacts filtered
 ```
 
 ---
@@ -90,10 +91,7 @@ Generates a CSV file listing all output file paths from the pipeline run.
 
 **Basic usage:**
 ```bash
-gosh run outputs \
-  -p ./results \
-  -s samplesheet.csv \
-  -o outputs.csv
+gosh run outputs
 ```
 
 **What it does:**
@@ -116,10 +114,7 @@ Creates a new samplesheet with paths to intermediate files for resuming or shari
 
 **Basic usage:**
 ```bash
-gosh run samplesheet \
-  -p ./results \
-  -s samplesheet.csv \
-  -o intermediate_samplesheet.csv
+gosh run samplesheet
 ```
 
 **What it does:**
@@ -134,10 +129,10 @@ gosh run samplesheet \
 gosh run pipeline -s original_samplesheet.csv
 
 # Generate intermediate samplesheet
-gosh run samplesheet -p ./results -s original_samplesheet.csv -o from_bams.csv
+gosh run samplesheet
 
 # New run skips alignment, starts from BAMs
-gosh run pipeline -s from_bams.csv
+gosh run pipeline -s samplesheet_from_outputs.csv
 ```
 
 ---
@@ -149,7 +144,6 @@ Converts pipeline outputs to JSON/Arrow format for the gOS browser.
 **Basic usage:**
 ```bash
 gosh run skilift \
-  --output-csv outputs.csv \
   --cohort-type paired \
   --gos_dir ~/public_html/my_cohort \
   --cores 8
