@@ -1,15 +1,242 @@
 # gOSh
 
-A CLI for the [nf-gOS](https://github.com/mskilab-org/nf-gos) nextflow pipeline. **Use gOSh to run nf-gOS.** While nf-gOS can be run directly through nextflow commands, this CLI simplifies the process and provides a framework to load in environments necessary to process tumor whole genome sequencing through nf-gOS.
+gOSh is a command-line tool that wraps around Nextflow to run the nf-gOS genomic analysis pipeline. It simplifies running complex genomic analyses by handling configuration, environment setup, and output processing.
+See [nf-gOS](https://github.com/mskilab-org/nf-gos) for the nextflow pipeline. **Use gOSh to run nf-gOS.** 
 
-## Quickstart
-1. In bash, `cd nf_gos_run_directory`.
-2. Provide a `samplesheet.csv` in `nf_gos_run_directory`.
-1. Enter `gosh run pipeline` to run the nf-gos pipeline (make sure to provide a samplesheet). The first time a pipeline is run, a wizard will prompt the user through essential settings (like reference assembly, and predefined configurations — i.e. presets).
-  - If you want to run only the JaBbA pipeline, use `gosh run pipeline --preset jabba`
-  - If you want to run only the HRD classifier pipeline, use `gosh run pipeline --preset hrd`
-2. `gosh run skilift` to convert the pipeline outputs into something ingestible by the gOS frontend
-3. (optional) `gosh run outputs -p [pipeline results directory] -s [samplesheet path]` to generate a csv containing your outputs. This is automatically done when you run `gosh run skilift` with a pipeline directory
+# Quickstart
+**Key point:** gOSh runs `nextflow run /path/to/nf-gos` for you with the right parameters. The pipeline location is auto-detected on NYU/NYGC systems, or you can specify your own with `--pipeline-dir /your/custom/nf-gos`.
+
+---
+
+## Core Commands
+
+### 1. Prepare Your Samplesheet
+
+Create a CSV file describing your samples. Here are the most common formats:
+
+**BAM files only (no lane column needed):**
+```bash
+cat > samplesheet.csv << EOF
+patient,sample,status,sex,bam
+TCGA001,TCGA001_tumor,1,M,/data/bams/tcga001_tumor.bam
+TCGA001,TCGA001_normal,0,M,/data/bams/tcga001_normal.bam
+TCGA002,TCGA002_tumor,1,F,/data/bams/tcga002_tumor.bam
+EOF
+```
+
+**FASTQ files (lane column REQUIRED):**
+```bash
+cat > samplesheet.csv << EOF
+patient,sample,lane,status,sex,fastq_1,fastq_2
+TCGA001,TCGA001_tumor,lane_1,1,M,/data/fastq/tumor_R1.fq.gz,/data/fastq/tumor_R2.fq.gz
+TCGA001,TCGA001_normal,lane_1,0,M,/data/fastq/normal_R1.fq.gz,/data/fastq/normal_R2.fq.gz
+EOF
+```
+
+**Mixed BAMs and FASTQs (lane column REQUIRED for all):**
+```bash
+cat > samplesheet.csv << EOF
+patient,sample,lane,status,sex,bam,fastq_1,fastq_2
+TCGA001,TCGA001_tumor,lane_1,1,M,/data/bams/tumor.bam,,
+TCGA001,TCGA001_normal,lane_1,0,M,,/data/fastq/normal_R1.fq.gz,/data/fastq/normal_R2.fq.gz
+EOF
+```
+
+**Starting from intermediates:**
+See [4. Generate Intermediate Samplesheet: gosh run samplesheet](https://github.com/mskilab-org/gosh/edit/main/README.md#4-generate-intermediate-samplesheet-gosh-run-samplesheet)
+
+---
+
+### 2. Run the Pipeline: `gosh run pipeline`
+
+Runs the nf-gOS Nextflow pipeline on your samples.
+
+**Basic usage:**
+```bash
+# Interactive mode - launches wizard to create params.json
+gosh run pipeline
+
+# With parameters
+gosh run pipeline \
+  --samplesheet samplesheet.csv \
+  --outdir ./results \
+  --reference hg19
+```
+
+**What it does:**
+- Loads required HPC modules (nextflow, singularity, java)
+- Creates/uses params.json configuration
+- Executes: `nextflow run /path/to/nf-gos -params-file params.json -resume`
+- Processes samples through alignment, variant calling, copy number, etc.
+- Outputs organized in `results/patient_id/process_name/`
+
+**For development (custom pipeline location):**
+```bash
+gosh run pipeline --pipeline-dir ~/my-fork/nf-gos
+```
+
+**Presets for specific analyses:**
+```bash
+gosh run pipeline --preset jabba    # JaBbA analysis only
+gosh run pipeline --preset hrd      # HRD classification
+gosh run pipeline --preset heme     # Hematological cancers
+```
+
+---
+
+### 3. Collect Outputs: `gosh run outputs`
+
+Generates a CSV file listing all output file paths from the pipeline run.
+
+**Basic usage:**
+```bash
+gosh run outputs \
+  -p ./results \
+  -s samplesheet.csv \
+  -o outputs.csv
+```
+
+**What it does:**
+- Scans the results directory for all generated files
+- Matches files to patients from your samplesheet
+- Creates outputs.csv with one row per patient
+- Maps file types (BAMs, VCFs, segments, etc.) to columns
+
+**Example outputs.csv structure:**
+```
+patient_id,bam_tumor,bam_normal,structural_variants,jabba_rds,purple_purity,purple_ploidy,...
+TCGA001,/results/TCGA001/alignment/tumor.bam,/results/TCGA001/alignment/normal.bam,...
+```
+
+---
+
+### 4. Generate Intermediate Samplesheet: `gosh run samplesheet`
+
+Creates a new samplesheet with paths to intermediate files for resuming or sharing.
+
+**Basic usage:**
+```bash
+gosh run samplesheet \
+  -p ./results \
+  -s samplesheet.csv \
+  -o intermediate_samplesheet.csv
+```
+
+**What it does:**
+- Takes your original samplesheet
+- Adds columns for intermediate files (coverage, segments, variants, etc.)
+- Useful for skipping completed steps in future runs
+- Enables sharing processed data without raw inputs
+
+**Use case - restart from BAMs:**
+```bash
+# Original run from FASTQs
+gosh run pipeline -s original_samplesheet.csv
+
+# Generate intermediate samplesheet
+gosh run samplesheet -p ./results -s original_samplesheet.csv -o from_bams.csv
+
+# New run skips alignment, starts from BAMs
+gosh run pipeline -s from_bams.csv
+```
+
+---
+
+### 5. Convert for Visualization: `gosh run skilift`
+
+Converts pipeline outputs to JSON/Arrow format for the gOS browser.
+
+**Basic usage:**
+```bash
+gosh run skilift \
+  --output-csv outputs.csv \
+  --cohort-type paired \
+  --gos_dir ~/public_html/my_cohort \
+  --cores 8
+```
+
+**What it does:**
+- Reads outputs.csv (or generates it from pipeline results)
+- Runs R Skilift package to convert genomic data
+- Creates JSON and Arrow files for web visualization
+- Generates datafiles.json manifest
+- Outputs ready for gOS browser
+
+**Direct from pipeline results (skips outputs.csv):**
+```bash
+gosh run skilift \
+  -p ./results \
+  -s samplesheet.csv \
+  --cohort-type paired \
+  --gos_dir ~/public_html/my_cohort
+```
+
+**Output structure:**
+```
+~/public_html/my_cohort/
+├── cohort.rds
+├── datafiles.json
+├── TCGA001/
+│   ├── coverage.json
+│   ├── junctions.arrow
+│   └── mutations.json
+└── TCGA002/
+    └── ...
+```
+
+---
+
+## Complete Example Workflow
+
+```bash
+# 1. Go to scratch directory (important for disk space)
+cd /gpfs/scratch/$(whoami)
+mkdir project1 && cd project1
+
+# 2. Create samplesheet
+cat > samplesheet.csv << EOF
+patient,sample,status,sex,bam
+PT001,PT001_T,1,M,/data/bams/patient1_tumor.bam
+PT001,PT001_N,0,M,/data/bams/patient1_normal.bam
+EOF
+
+# 3. Run pipeline (wizard appears on first run)
+export ONCOKB_API_KEY="your-key"
+gosh run pipeline --samplesheet samplesheet.csv --reference hg19
+
+# 4. Generate outputs manifest (after pipeline completes)
+gosh run outputs -p ./results -s samplesheet.csv -o outputs.csv
+
+# 5. Convert for visualization
+gosh run skilift \
+  --output-csv outputs.csv \
+  --cohort-type paired \
+  --gos_dir ~/public_html/project1_cohort \
+  --cores 8
+
+# 6. View in browser
+echo "Access at: https://genome.med.nyu.edu/external/.../$(whoami)/project1_cohort/"
+```
+
+---
+
+## Key Tips
+
+1. **Always use scratch directory** for pipeline runs (work/ directory gets huge)
+2. **hg19 is recommended** - hg38 support is still under construction
+3. **Pipeline auto-resumes** - no need to add --resume flag
+4. **Check failed processes**: `gosh debug log --status FAILED`
+5. **Get AI help**: `gosh help ask "your question about the pipeline"`
+
+---
+
+## Environment Notes
+
+- **NYU HPC**: Pipeline at `/gpfs/data/imielinskilab/git/mskilab/nf-gos`
+- **NYGC HPC**: Pipeline at `/gpfs/commons/groups/imielinski_lab/git/nf-gos`
+- **Custom/Dev**: Use `--pipeline-dir /your/path/to/nf-gos`
+
+The pipeline location and HPC modules are auto-detected on NYU/NYGC systems. For other environments, specify `--pipeline-dir` and ensure Nextflow and Singularity are available.
 
 # Detailed Usage
 
