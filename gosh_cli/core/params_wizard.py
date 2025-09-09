@@ -72,6 +72,7 @@ def create_params_file(
     # New preset based configuration.
     presets = {
         "default": "",
+        "ffpe": "",
         "jabba": "sage,snpeff,snv_multiplicity,signatures,hrdetect",
         "hrd": "non_integer_balance,lp_phased_balance,events,fusions",
         "heme": "msisensorpro,hrdetect,onenesstwoness",
@@ -85,6 +86,7 @@ def create_params_file(
         preset_prompt = (
             "Available presets:\n"
             " - default (recommended): runs all tools; aligner, bamqc, gridss, amber, fragcounter, dryclean, cbs, sage, purple, jabba, non_integer_balance, lp_phased_balance, events, fusions, snpeff, snv_multiplicity, signatures, hrdetect \n"
+            " - ffpe (runs all tools plus chimera filtering during aligner and gridss steps): aligner, bamqc, gridss, amber, fragcounter, dryclean, cbs, sage, purple, jabba, non_integer_balance, lp_phased_balance, events, fusions, snpeff, snv_multiplicity, signatures, hrdetect \n"
             " - jabba: runs all tools necessary for JaBbA outputs (skips tools: sage, snpeff, snv_multiplicity, signatures, hrdetect)\n"
             " - hrd: runs HR deficiency pipeline (skips tools: non_integer_balance, lp_phased_balance, events, fusions)\n"
             " - heme: runs heme pipeline (skips tools: msisensorpro, hrdetect, onenesstwoness)\n"
@@ -119,11 +121,23 @@ def create_params_file(
         "email": email,
         "tumor_only": is_tumor_only
     }
+
+    paired_or_tumoronly_params = {
+        purple_use_svs: True,
+        purple_use_smlvs: True
+    }
+    if is_tumor_only:
+        paired_or_tumoronly_params["purple_use_svs"] = False
+        paired_or_tumoronly_params["purple_use_smlvs"] = False
+    
+    params.update(paired_or_tumoronly_params)
+
     if preset_used != "default":
         params["skip_tools"] = presets[preset_used]
     if preset_used == "heme":
         print("Adding heme specific parameters...")
         params.update({
+            "is_heme": True,
             "is_retier_whitelist_junctions": True,
             "purple_use_svs": False,
             "purple_use_smlvs": False,
@@ -131,6 +145,13 @@ def create_params_file(
             "purple_min_purity": 0.25,
             "purple_ploidy_penalty_factor": 0.6
         })
+    if preset_used == "ffpe":
+        print("Adding ffpe filtering parameters...")
+        params.update({
+            "filter_ffpe_impact": True,
+            "filter_ffpe_chimera": True
+        })
+
 
     print("Parameters:")
     print(json.dumps(params, indent=4))
