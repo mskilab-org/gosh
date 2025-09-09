@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import re
@@ -317,7 +318,7 @@ def pipeline(
         f"-profile {profile} "
         f"-with-report report_{runner.get_timestamp()}.html "
         f"-with-trace"
-        # f"-dump-hashes "
+        # f"&& gosh run skilift"
     )
 
     if resume:
@@ -332,14 +333,15 @@ def pipeline(
 
 from ..core.outputs import OUTPUT_KEYS
 @run_cli.command()
-@click.option('-p', '--pipeline-output-dir', required=True, type=click.Path(exists=True), help="Directory containing pipeline outputs")
-@click.option('-s', '--samplesheet', default='./samplesheet.csv', required=True, type=click.Path(exists=True), help="Path to the samplesheet CSV file")
+@click.option('-p', '--pipeline-output-dir', default='./results/', required=False, type=click.Path(exists=True), help="Directory containing pipeline outputs")
+@click.option('-s', '--samplesheet', default='./samplesheet.csv', required=False, type=click.Path(exists=True), help="Path to the samplesheet CSV file")
 @click.option('--old', is_flag=True, default=False, help="Whether to use the old outputs mapping (default: False)")
 @click.option('--prefer-outputs', is_flag=True, default=False, help="If output and samplesheet column are both found, use the output column (default: False)")
-@click.option('-o', '--output', type=click.Path(), help="CSV file to save outputs (default: stdout)")
+@click.option('-o', '--output', default="outputs.csv", type=click.Path(), help="CSV file to  save outputs default: (./outputs.csv)")
+@click.option('-f', '--force', default=False, is_flag = True, help="Overwrite output file specified by -o/--output flag (default: False)")
 @click.option('-c', '--include-columns', help='Comma-separated list of columns to include. Available: {}'.format(",".join(OUTPUT_KEYS)))
 @click.option('-C', '--exclude-columns', help='Comma-separated list of columns to exclude. Available: see --include-columns')
-def outputs(pipeline_output_dir, samplesheet, old, prefer_outputs, output, include_columns, exclude_columns):
+def outputs(pipeline_output_dir, samplesheet, old, prefer_outputs, output, include_columns, exclude_columns, force):
     """
     Generate an outputs.csv file suitable for skilifting.
     Reads pipeline outputs and samplesheet to create a CSV mapping patient data to output file paths.
@@ -362,23 +364,52 @@ def outputs(pipeline_output_dir, samplesheet, old, prefer_outputs, output, inclu
         invalid_cols = [col for col in exclude_list if col not in available_columns]
         if invalid_cols:
             raise click.BadParameter(f"Invalid columns specified in --exclude-columns: {', '.join(invalid_cols)}. Available: {', '.join(OUTPUT_KEYS)}")
+    
+    is_pipeline_output_valid = os.path.isdir(pipeline_output_dir)
 
+    errmsg = []
+    raise_error = False
+    if not is_pipeline_output_valid:
+        raise_error = True
+        errmsg.append("-p/--pipeline-output-dir flag must be set to an existing outputs directory, default ./results/")
+        
+    
+    is_samplesheet_valid = os.path.isfile(samplesheet)
+
+    if not is_samplesheet_valid:
+        raise_error = True
+        errmsg.append("-s/--samplesheet flag must be set to an existing samplesheet, default ./samplesheet.csv")
+
+    if raise_error:
+        raise Exception("; ".join(errmsg))
+
+    is_output_present_already = isinstance(output, str) and os.path.isfile(output)
+    do_overwrite = is_output_present_already and force
+    do_error_out = is_output_present_already and not force
+    if do_overwrite:
+        print(f'Warning: --force flag is set, {output} file exists and will be overwritten!')
+    elif do_error_out:
+        raise Exception(f'{output} file exists, but --force flag is not set! If you wish to overwrite the output file, explicitly set the flag "--force"')
 
     outputs_obj = Outputs(pipeline_output_dir, samplesheet, old, prefer_outputs)
     outputs_obj.emit_output_csv(output, include_columns=include_list, exclude_columns=exclude_list)
+
+    
+        
     if output:
         click.echo(f"Outputs CSV generated at: {output}")
 
 
 from ..core.outputs import SAMPLESHEET_FIELDNAMES
 @run_cli.command()
-@click.option('-p', '--pipeline-output-dir', required=True, type=click.Path(exists=True), help="Directory containing pipeline outputs")
-@click.option('-s', '--samplesheet', default='./samplesheet.csv', required=True, type=click.Path(exists=True), help="Path to the samplesheet CSV file")
+@click.option('-p', '--pipeline-output-dir', default='./results/', required=False, type=click.Path(exists=True), help="Directory containing pipeline outputs")
+@click.option('-s', '--samplesheet', default='./samplesheet.csv', required=False, type=click.Path(exists=True), help="Path to the samplesheet CSV file")
 @click.option('--old', is_flag=True, default=False, help="Whether to use the old outputs mapping (default: False)")
-@click.option('-o', '--output', type=click.Path(), help="CSV file to save samplesheet (default: stdout)")
+@click.option('-o', '--output', type=click.Path(), default = "samplesheet_from_outputs.csv", help="CSV file to save samplesheet (default: stdout)")
+@click.option('-f', '--force', type=bool, default=False, is_flag=True, help="Overwrite output file specified by -o/--output (default: False)")
 @click.option('-c', '--include-columns', help='Comma-separated list of columns to include. Available: {}'.format(",".join(SAMPLESHEET_FIELDNAMES)))
 @click.option('-C', '--exclude-columns', help='Comma-separated list of columns to exclude. Available: see --include-columns')
-def samplesheet(pipeline_output_dir, samplesheet, old, output, include_columns, exclude_columns):
+def samplesheet(pipeline_output_dir, samplesheet, old, output, include_columns, exclude_columns, force):
     """
     Generate a samplesheet.csv file suitable for a pipeline run.
     Reads pipeline outputs and the original samplesheet to create a new samplesheet
@@ -402,18 +433,52 @@ def samplesheet(pipeline_output_dir, samplesheet, old, output, include_columns, 
         invalid_cols = [col for col in exclude_list if col not in available_columns]
         if invalid_cols:
             raise click.BadParameter(f"Invalid columns specified in --exclude-columns: {', '.join(invalid_cols)}. Available: {', '.join(SAMPLESHEET_FIELDNAMES)}")
+    
+    is_pipeline_output_valid = os.path.isdir(pipeline_output_dir)
+
+    errmsg = []
+    raise_error = False
+    if not is_pipeline_output_valid:
+        raise_error = True
+        errmsg.append("-p/--pipeline-output-dir flag must be set to an existing outputs directory, default ./results/")
+        
+    
+    is_samplesheet_valid = os.path.isfile(samplesheet)
+
+    if not is_samplesheet_valid:
+        raise_error = True
+        errmsg.append("-s/--samplesheet flag must be set to an existing samplesheet, default ./samplesheet.csv")
+
+    if raise_error:
+        raise Exception("; ".join(errmsg))
+    
+    
+
+    is_output_present_already = isinstance(output, str) and os.path.isfile(output)
+    do_overwrite = is_output_present_already and force
+    output_path = output
+    if do_overwrite:
+        print(f'Warning: --force flag is set, {output} file exists and will be overwritten!')
+    elif is_output_present_already:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        original_filename = output
+        filename_base, file_extension = os.path.splitext(original_filename)
+        new_filename = f"{filename_base}_{timestamp}{file_extension}"
+        output_path = new_filename
+        print(f'Warning: --force flag is not set, {output} file exists, so output will be written to {output_path}!')
 
     outputs_obj = Outputs(pipeline_output_dir, samplesheet, old)
-    outputs_obj.emit_samplesheet_csv(output, include_columns=include_list, exclude_columns=exclude_list)
+    outputs_obj.emit_samplesheet_csv(output_path, include_columns=include_list, exclude_columns=exclude_list)
+
     if output:
-        click.echo(f"Samplesheet CSV generated at: {output}")
+        click.echo(f"Samplesheet CSV generated at: {output_path}")
 
 
 @run_cli.command()
-@click.option('-p', '--pipeline-output-dir', type=click.Path(exists=True), help="Directory containing pipeline outputs")
-@click.option('-s', '--samplesheet', type=click.Path(exists=True), help="Path to the samplesheet CSV file used to generate the outputs.csv")
+@click.option('-p', '--pipeline-output-dir', default = "./results/", type=click.Path(exists=True), help="Directory containing pipeline outputs")
+@click.option('-s', '--samplesheet', default = "./samplesheet.csv", type=click.Path(exists=True), help="Path to the samplesheet CSV file used to generate the outputs.csv")
 @click.option('--old', is_flag=True, default=False, help="Whether the outputs.csv was generated using the old process_name/patient_id nf-gos outputs mapping (default: False)")
-@click.option('--output-csv', type=click.Path(exists=True), help="Path to the outputs.csv file generated by 'gosh run outputs'.")
+@click.option('--output-csv', default = "./outputs.csv", type=click.Path(exists=True), help="Path to the outputs.csv file generated by 'gosh run outputs'.")
 @click.option('-t', '--cohort-type', type=click.Choice(['paired', 'tumor_only', 'heme']), default='paired', help='Type of the cohort.')
 @click.option('-o', '--gos_dir', type=click.Path(), required=True, help='Path to where the skilifted outputs should be deposited.')
 @click.option('-l', '--skilift-repo', type=click.Path(), default="~/git/skilift", help='Path to the skilift repo (default: ~/git/skilift)')
@@ -449,12 +514,18 @@ def skilift(
             click.echo("Skilift repository is required. Exiting.")
             return
 
-    if not pipeline_output_dir and not output_csv:
+    is_samplesheet_present = isinstance(samplesheet, str) and os.path.isfile(samplesheet)
+    is_output_csv_present = isinstance(output_csv, str) and os.path.isfile(output_csv)
+    is_pipeline_output_dir_present = isinstance(pipeline_output_dir, str) and os.path.isdir(pipeline_output_dir)
+
+
+    if (not pipeline_output_dir and not is_pipeline_output_dir_present) and (not output_csv and not is_output_csv_present):
         click.echo("Error: Either --pipeline-output-dir or --output-csv must be provided.")
         return
 
-    if not output_csv:
-        if not path.isfile(samplesheet):
+    is_output_csv_absent = not output_csv and not is_output_csv_present
+    if is_output_csv_absent:
+        if not is_samplesheet_present:
             click.echo(f"Error: The samplesheet '{samplesheet}' does not exist. Please provide a samplesheet with the -s option.")
             return
         if not path.isdir(pipeline_output_dir):
