@@ -123,8 +123,8 @@ def create_params_file(
     }
 
     paired_or_tumoronly_params = {
-        purple_use_svs: True,
-        purple_use_smlvs: True
+        "purple_use_svs": True,
+        "purple_use_smlvs": True
     }
     if is_tumor_only:
         paired_or_tumoronly_params["purple_use_svs"] = False

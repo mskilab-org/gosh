@@ -32,6 +32,7 @@ OUTPUT_KEYS = [
     "msisensorpro",
     "msisensorpro_germline",
     "structural_variants",
+    "structural_variants_retiered",
     "structural_variants_unfiltered",
     "structural_variants_raw",
     "frag_cov_tumor",
@@ -95,6 +96,7 @@ SAMPLESHEET_FIELDNAMES = [
     "cobalt_dir", "purple_pp_best_fit", "purple_pp_range", "purity", "ploidy", 
     "seg", "nseg", 
     "vcf", "vcf_raw",
+    "structural_variants_retiered",
     "structural_variants_chimera_filtered", "structural_variants_raw_chimera_filtered",
     "jabba_rds", "jabba_gg", "ni_balanced_gg", "lp_balanced_gg", "events", "fusions",
     "snv_somatic_vcf", "snv_germline_vcf", 
@@ -120,7 +122,7 @@ OUTPUT_FILES_MAPPING_OLD = {
     "msisensorpro": r"msisensorpro/.*(?<!_dis)(?<!_somatic)(?<!_germline)(?<!\.list)$",
     "structural_variants": [
         r"sv_calling/gridss_somatic/.*/.*high_confidence_somatic\.vcf\.bgz$",
-        r"sv_calling/tumor_only_junction_filter/.*/somatic\.filtered\.sv\.rds$"
+        r"sv_calling/tumor_only_junction_filter/.*/somatic\.filtered\.sv\.rds$",
     ],
     "structural_variants_unfiltered": r"sv_calling/gridss/.*/.*\.gridss\.filtered\.vcf\.gz$",
     "frag_cov_tumor": r"coverage/fragcounter_tumor/.*/cov\.rds$",
@@ -260,8 +262,12 @@ OUTPUT_FILES_MAPPING = {
     "msisensorpro": r"msisensorpro/.*_report$",
     "structural_variants": [
         r"gridss/.*high_confidence_somatic\.vcf\.bgz$",
+        r"gridss/.*somatic\.filtered\.sv\.no\.gnomAD\.rds$",
         r"tumor_only_junction_filter/.*/somatic\.filtered\.sv\.rds$",
         r"gridss/.*somatic\.filtered\.sv\.rds$",
+    ],
+    "structural_variants_retiered": [
+        r"jabba/.*somatic\.filtered\.sv.*___tiered\.rds$"
     ],
     "structural_variants_unfiltered": r"gridss.*/.*\.gridss\.filtered\.vcf\.gz$",
     "structural_variants_raw": r"gridss.*/.*\.gridss\.vcf\.gz$",
@@ -366,6 +372,7 @@ class Outputs:
                 "nseg": "nseg",
                 "vcf": "structural_variants",
                 "vcf_raw": "structural_variants_raw",
+                "structural_variants_retiered": "structural_variants_retiered",
                 "structural_variants_chimera_filtered": "structural_variants_chimera_filtered",
                 "structural_variants_raw_chimera_filtered": "structural_variants_raw_chimera_filtered",
                 "jabba_rds": "jabba_rds",
@@ -784,6 +791,7 @@ class Outputs:
                     "nseg": record.get("nseg", ""),
                     "vcf": record.get("structural_variants", ""),
                     "vcf_raw": record.get("structural_variants_raw", ""),
+                    "structural_variants_retiered": record.get("structural_variants_retiered", ""),
                     "structural_variants_chimera_filtered": record.get("structural_variants_chimera_filtered", ""),
                     "structural_variants_raw_chimera_filtered": record.get("structural_variants_raw_chimera_filtered", ""),
                     "jabba_rds": record.get("jabba_rds", ""),
@@ -863,6 +871,7 @@ class Outputs:
                     "nseg": record.get("nseg", ""),
                     "vcf": record.get("structural_variants", ""),
                     "vcf_raw": record.get("structural_variants_raw", ""),
+                    "structural_variants_retiered": record.get("structural_variants_retiered", ""),
                     "structural_variants_chimera_filtered": record.get("structural_variants_chimera_filtered", ""),
                     "structural_variants_raw_chimera_filtered": record.get("structural_variants_raw_chimera_filtered", ""),
                     "jabba_rds": record.get("jabba_rds", ""),
