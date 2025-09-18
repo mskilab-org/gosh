@@ -40,7 +40,11 @@ OUTPUT_KEYS = [
     "coverage_tumor",
     "coverage_normal",
     "snvs_somatic",
-    "snvs_somatic_unfiltered",
+    "snvs_somatic_vcf_unfiltered",
+    "snvs_somatic_vcf_tumoronly_filtered",
+    "snvs_somatic_vcf_raw",
+    "itdseek_vcf",
+    "itdseek_rds",
     "snvs_germline",
     "het_pileups",
     "amber_dir",
@@ -99,7 +103,8 @@ SAMPLESHEET_FIELDNAMES = [
     "structural_variants_retiered",
     "structural_variants_chimera_filtered", "structural_variants_raw_chimera_filtered",
     "jabba_rds", "jabba_gg", "ni_balanced_gg", "lp_balanced_gg", "events", "fusions",
-    "snv_somatic_vcf", "snv_germline_vcf", 
+    "snv_somatic_vcf", "snv_somatic_vcf_tumoronly_filtered", "snv_somatic_vcf_raw", "snv_germline_vcf",
+    "itdseek_vcf", "itdseek_rds",
     "variant_somatic_ann", "variant_somatic_bcf", 
     "variant_germline_ann", "variant_germline_bcf",
     "snv_multiplicity", 
@@ -262,11 +267,13 @@ OUTPUT_FILES_MAPPING = {
     "msisensorpro": r"msisensorpro/.*_report$",
     "structural_variants": [
         r"gridss/.*high_confidence_somatic\.vcf\.bgz$",
+        r"gridss/.*somatic\.filtered\.gnomAD\.sv\.rds$",
         r"gridss/.*somatic\.filtered\.sv\.no\.gnomAD\.rds$",
         r"tumor_only_junction_filter/.*/somatic\.filtered\.sv\.rds$",
         r"gridss/.*somatic\.filtered\.sv\.rds$",
     ],
     "structural_variants_retiered": [
+        r"jabba/.*somatic\.filtered\.gnomAD\.sv.*___tiered\.rds$",
         r"jabba/.*somatic\.filtered\.sv.*___tiered\.rds$"
     ],
     "structural_variants_unfiltered": r"gridss.*/.*\.gridss\.filtered\.vcf\.gz$",
@@ -281,11 +288,19 @@ OUTPUT_FILES_MAPPING = {
         r"sage/somatic/tumor_only_filter/.*\.sage\.pass_filtered\.tumoronly\.vcf\.gz$",
         r"sage/somatic/.*\.sage\.pass_filtered\.vcf\.gz$"
     ],
-    "snvs_somatic_unfiltered": [
+    "snvs_somatic_vcf_tumoronly_filtered": [
+        r"sage/somatic/tumor_only_filter/.*\.sage\.pass_filtered\.tumoronly\.vcf\.gz$"
+    ],
+    "snvs_somatic_vcf_unfiltered": [
         r"sage/somatic/.*sage\.somatic\.vcf\.gz$",
         r"sage/somatic/.*\.sage\.pass_filtered\.vcf\.gz$"
 	],
+    "snvs_somatic_vcf_raw": [
+        r"sage/somatic/.*sage\.somatic\.vcf\.gz$"
+    ],
     "snvs_germline": r"sage/germline/.*sage\.germline\.vcf\.gz$",
+    "itdseek_vcf": r"itdseek/.*flt3_itd.*\.vcf$",
+    "itdseek_rds": r"itdseek/.*flt3_itd_status\.rds$",
     "het_pileups": r"amber/sites\.txt$",
     "amber_dir": r"amber/amber/",
     "cobalt_dir": r"cobalt/cobalt/",
@@ -385,6 +400,10 @@ class Outputs:
                 "fusions": "fusions",
                 "snv_somatic_vcf": "snvs_somatic",
                 "snv_germline_vcf": "snvs_germline",
+                "snv_somatic_vcf_tumoronly_filtered": "snvs_somatic_vcf_tumoronly_filtered",
+                "snv_somatic_vcf_raw": "snvs_somatic_vcf_raw",
+                "itdseek_vcf": "itdseek_vcf",
+                "itdseek_rds": "itdseek_rds",
                 "variant_somatic_ann": "variant_annotations_somatic_vcf",
                 "variant_somatic_bcf": "variant_annotations_somatic",
                 "variant_germline_ann": "variant_annotations_germline_vcf",
@@ -508,7 +527,7 @@ class Outputs:
     def _collect_outputs(
         self,
         use_old_output_files_mapping = False,
-        prefer_outputs = False
+        prefer_outputs = True
     ) -> list:
         """
         For each patient_id from the samplesheet, scan the outputs directory to find files matching
@@ -802,6 +821,11 @@ class Outputs:
                     "fusions": record.get("fusions", ""),
                     "snv_somatic_vcf": record.get("snvs_somatic", ""),
                     "snv_germline_vcf": record.get("snvs_germline", ""),
+                    "snv_somatic_vcf_unfiltered": record.get("snvs_somatic_vcf_unfiltered", ""),
+                    "snv_somatic_vcf_tumoronly_filtered": record.get("snvs_somatic_vcf_tumoronly_filtered", ""),
+                    "snv_somatic_vcf_raw": record.get("snvs_somatic_vcf_raw", ""),
+                    "itdseek_vcf": record.get("itdseek_vcf", ""),
+                    "itdseek_rds": record.get("itdseek_rds", ""),
                     "variant_somatic_ann": record.get("variant_annotations_somatic_vcf", ""),
                     "variant_somatic_bcf": record.get("variant_annotations_somatic", ""),
                     "variant_germline_ann": record.get("variant_annotations_germline_vcf", ""),
@@ -881,11 +905,16 @@ class Outputs:
                     "events": record.get("events", ""),
                     "fusions": record.get("fusions", ""),
                     "snv_somatic_vcf": record.get("snvs_somatic", ""),
+                    "snv_somatic_vcf_unfiltered": record.get("snvs_somatic_vcf_unfiltered", ""),
+                    "snv_somatic_vcf_tumoronly_filtered": record.get("snvs_somatic_vcf_tumoronly_filtered", ""),
+                    "snv_somatic_vcf_raw": record.get("snvs_somatic_vcf_raw", ""),
                     "snv_germline_vcf": record.get("snvs_germline", ""),
                     "variant_somatic_ann": record.get("variant_annotations_somatic_vcf", ""),
                     "variant_somatic_bcf": record.get("variant_annotations_somatic", ""),
                     "variant_germline_ann": record.get("variant_annotations_germline_vcf", ""),
                     "variant_germline_bcf": record.get("variant_annotations_germline", ""),
+                    "itdseek_vcf": record.get("itdseek_vcf", ""),
+                    "itdseek_rds": record.get("itdseek_rds", ""),
                     "snv_multiplicity": record.get("multiplicity", ""),
                     "oncokb_maf": record.get("oncokb_snv", ""),
                     "oncokb_fusions": record.get("oncokb_fusions", ""),
