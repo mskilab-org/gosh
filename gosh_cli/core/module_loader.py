@@ -73,7 +73,7 @@ def load_required_modules(env_defaults):
     # Check if JAVA_HOME is set to correct path
     default_java = env_defaults.get('JAVA_HOME')
     envvar_java = os.environ.get("JAVA_HOME")
-    if 'JAVA_HOME' in os.environ and not default_java:
+    if 'JAVA_HOME' in os.environ and not default_java == envvar_java:
         print(f"JAVA_HOME is set to {envvar_java}")
     else:
         if default_java != envvar_java:
