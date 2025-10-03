@@ -17,6 +17,8 @@ OUTPUT_KEYS = [
     "sex",
     "bam_tumor",
     "bam_normal",
+    "bam_tumor_chimera_filtered",
+    "bam_normal_chimera_filtered",
     "qc_dup_rate",
     "qc_dup_rate_tumor",
     "qc_dup_rate_normal",
@@ -94,7 +96,7 @@ OUTPUT_KEYS = [
 # Define the default samplesheet columns
 SAMPLESHEET_FIELDNAMES = [
     "patient", "sample", "status", "sex", 
-    "bam", 
+    "bam", "bam_chimera_filtered",
     "qc_dup_rate", "qc_alignment_summary", "qc_insert_size", "qc_coverage_metrics", 
     "msi", "msi_germline", 
     "hets", "amber_dir", 
@@ -185,13 +187,19 @@ OUTPUT_FILES_MAPPING_OLD = {
 # Map each output key to its file regex pattern(s)
 OUTPUT_FILES_MAPPING = {
     "bam": [
-        r"alignment/.*\.bam$"	
+        r"alignment/.*(?<!ffpe_filtered)\.bam$"	
 	],
     "bam_tumor": [
-        r"alignment/.*\.bam$"	
+        r"alignment/.*(?<!ffpe_filtered)\.bam$"	
 	],
     "bam_normal": [
-        r"alignment/.*\.bam$"	
+        r"alignment/.*(?<!ffpe_filtered)\.bam$"	
+	],
+    "bam_tumor_chimera_filtered": [
+        r"alignment/.*ffpe_filtered\.bam$"	
+	],
+    "bam_normal_chimera_filtered": [
+        r"alignment/.*ffpe_filtered\.bam$"
 	],
     "qc_dup_rate": [
         r"gatk_qc/.*/.*metrics",
@@ -799,6 +807,7 @@ class Outputs:
                     "status": "1",
                     "sex": record.get("sex", ""),
                     "bam": record.get("bam_tumor", ""),
+                    "bam_chimera_filtered": record.get("bam_tumor_chimera_filtered", ""),
                     "qc_dup_rate": record.get("qc_dup_rate", ""),
                     "qc_alignment_summary": record.get("qc_alignment_summary", ""),
                     "qc_insert_size": record.get("qc_insert_size", ""),
@@ -863,6 +872,7 @@ class Outputs:
                 normal_row["sample"] = normal_sample
                 normal_row["status"] = "0"
                 normal_row["bam"] = record.get("bam_normal", "")
+                normal_row["bam_chimera_filtered"] = record.get("bam_normal_chimera_filtered", "")
                 normal_row["qc_dup_rate"] = record.get("qc_dup_rate_normal", "")
                 normal_row["qc_alignment_summary"] = record.get("qc_alignment_summary_normal", "")
                 normal_row["qc_insert_size"] = record.get("qc_insert_size_normal", "")
@@ -887,6 +897,7 @@ class Outputs:
                     "status": status,
                     "sex": record.get("sex", ""),
                     "bam": bam_val,
+                    "bam_chimera_filtered": record.get("bam_tumor_chimera_filtered", ""),
                     "qc_dup_rate": record.get("qc_dup_rate", ""),
                     "qc_alignment_summary": record.get("qc_alignment_summary", ""),
                     "qc_insert_size": record.get("qc_insert_size", ""),
