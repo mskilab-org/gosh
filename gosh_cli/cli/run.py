@@ -318,7 +318,9 @@ def pipeline(
         f"-profile {profile} "
         f"-with-report report_{runner.get_timestamp()}.html "
         f"-with-trace"
-        # f"&& gosh run skilift"
+        # f"; gosh run outputs --force"
+        # f"; gosh run samplesheet --force"
+        # f"; gosh debug log > debug.log"
     )
 
     if resume:
@@ -329,6 +331,27 @@ def pipeline(
 
     print(f"command to run: {command}")
     runner.run(command)
+
+    runner.run("gosh run post")
+
+
+
+@run_cli.command()
+@click.option('-p', '--pipeline-output-dir', default='./results/', required=False, type=click.Path(exists=True), help="Directory containing pipeline outputs")
+def post(pipeline_output_dir):
+    from ..core.module_loader import load_required_modules # Keep this specific import if needed elsewhere
+    env_defaults = get_environment_defaults()
+    load_modules_command = load_required_modules(env_defaults)
+    command = (
+        f"{load_modules_command} "
+        f"{{ gosh run outputs --force; "
+        f"gosh run samplesheet --force; "
+        f"gosh debug log > debug.log; }}"
+    )
+    try:
+        run(command, shell=True, check=True, executable = "/bin/bash")
+    except CalledProcessError as e:
+        raise RuntimeError(f"gosh post execution failed: {e}")
 
 
 from ..core.outputs import OUTPUT_KEYS
