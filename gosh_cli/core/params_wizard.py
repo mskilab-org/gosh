@@ -131,7 +131,8 @@ def create_params_file(
             "purple_use_smlvs": False,
             "purple_highly_diploid_percentage": 1.0,
             "purple_min_purity": 0.25,
-            "purple_ploidy_penalty_factor": 0.6
+            "purple_ploidy_penalty_factor": 0.6,
+            "purple_revise_purity_ploidy": True
         })
     if preset_used == "ffpe":
         print("Adding ffpe filtering parameters...")
