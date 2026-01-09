@@ -22,6 +22,7 @@ def run_nextflow_log(args):
         command,
         capture_output=True,
         text=True,
+        executable = "/bin/bash"
     )
     if result.returncode != 0:
         raise RuntimeError(f"Error running nextflow log: {result.stderr}")

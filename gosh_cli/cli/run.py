@@ -529,7 +529,7 @@ def skilift(
             clone_url = "https://github.com/mskilab-org/skilift.git"
             click.echo(f"Cloning skilift from {clone_url} to {skilift_repo} ...")
             try:
-                subprocess.run(["git", "clone", clone_url, skilift_repo], check=True)
+                subprocess.run(["git", "clone", clone_url, skilift_repo], check=True, executable = "/bin/bash")
             except Exception as err:
                 click.echo(f"Error cloning skilift repository: {err}")
                 return
