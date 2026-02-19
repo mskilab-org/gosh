@@ -1,9 +1,11 @@
 import shutil
+import os
+import socket
 
 def get_environment_defaults():
-    import socket
+    nfgos_dir = os.environ.get('NFGOS_DIR')
     nyu_defaults = {
-        'pipeline-dir': "/gpfs/data/imielinskilab/git/mskilab/nf-gos",
+        'pipeline-dir': nfgos_dir if nfgos_dir else "/gpfs/data/imielinskilab/git/mskilab/nf-gos",
         'profile': "nyu",
         'nextflow_module': "nextflow/23.04.4",
         'aws_module': 'aws-cli',
@@ -11,7 +13,7 @@ def get_environment_defaults():
         'datasets_json': '/gpfs/data/imielinskilab/external/mskiweb/xanthc01/case-report/datasets.json'
     }
     nygc_defaults = {
-        'pipeline-dir': "/gpfs/commons/groups/imielinski_lab/git/nf-gos",
+        'pipeline-dir': nfgos_dir if nfgos_dir else "/gpfs/commons/groups/imielinski_lab/git/nf-gos",
         'profile': "nygc",
         'nextflow_module': "nextflow/23.10.0",
         'aws_module': 'awscli',
@@ -40,7 +42,6 @@ def get_environment_defaults():
     return {}
 
 def load_required_modules(env_defaults):
-    import os
     required_commands = ['nextflow', 'aws', 'singularity']
     modules_to_load = []
     load_modules_command = ""
