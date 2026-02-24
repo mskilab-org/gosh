@@ -118,7 +118,9 @@ SAMPLESHEET_FIELDNAMES = [
     "sbs_signatures", "indel_signatures", "signatures_matrix", 
     "signatures_matrix_indel",
     "signatures_decomposed_sbs",
+    "signatures_post_prob_sbs",
     "signatures_decomposed_indel",
+    "signatures_post_prob_indel",
     "hrdetect", "onenesstwoness", "conpair_concordance", "conpair_contamination"
 ]
 
@@ -388,6 +390,7 @@ class Outputs:
             # Maps for columns that need to be split by status (tumor "1" vs normal "0")
             conditional_mapping = {
                 "bam": ("bam_tumor", "bam_normal"),
+                "bam_chimera_filtered": ("bam_tumor_chimera_filtered", "bam_normal_chimera_filtered"),
                 "qc_dup_rate": ("qc_dup_rate", "qc_dup_rate_normal"),
                 "qc_alignment_summary": ("qc_alignment_summary", "qc_alignment_summary_normal"),
                 "qc_insert_size": ("qc_insert_size", "qc_insert_size_normal"),
@@ -444,7 +447,9 @@ class Outputs:
                 "signatures_matrix": "signatures_matrix_sbs",
                 "signatures_matrix_indel": "signatures_matrix_indel",
                 "signatures_decomposed_sbs": "signatures_decomposed_sbs",
+                "signatures_post_prob_sbs": "signatures_post_prob_sbs",
                 "signatures_decomposed_indel": "signatures_decomposed_indel",
+                "signatures_post_prob_indel": "signatures_post_prob_indel",
                 "hrdetect": "hrdetect",
                 "onenesstwoness": "onenesstwoness",
                 "conpair_concordance": "conpair_concordance",
@@ -871,7 +876,9 @@ class Outputs:
                     "signatures_matrix": record.get("signatures_matrix_sbs", ""),
                     "signatures_matrix_indel": record.get("signatures_matrix_indel", ""),
                     "signatures_decomposed_sbs": record.get("signatures_decomposed_sbs", ""),
+                    "signatures_post_prob_sbs": record.get("signatures_post_prob_sbs", ""),
                     "signatures_decomposed_indel": record.get("signatures_decomposed_indel", ""),
+                    "signatures_post_prob_indel": record.get("signatures_post_prob_indel", ""),
                     "hrdetect": record.get("hrdetect", ""),
                     "onenesstwoness": record.get("onenesstwoness", ""),
                     "conpair_concordance": record.get("conpair_concordance", ""),
@@ -963,6 +970,8 @@ class Outputs:
                     "signatures_matrix_indel": record.get("signatures_matrix_indel", ""),
                     "signatures_decomposed_sbs": record.get("signatures_decomposed_sbs", ""),
                     "signatures_decomposed_indel": record.get("signatures_decomposed_indel", ""),
+                    "signatures_post_prob_sbs": record.get("signatures_post_prob_sbs", ""),
+                    "signatures_post_prob_indel": record.get("signatures_post_prob_indel", ""),
                     "hrdetect": record.get("hrdetect", ""),
                     "onenesstwoness": record.get("onenesstwoness", ""),
                     "conpair_concordance": record.get("conpair_concordance", ""),
