@@ -278,6 +278,7 @@ OUTPUT_FILES_MAPPING = {
 	],
     "msisensorpro": r"msisensorpro/.*_report$",
     "structural_variants": [
+        r"gridss/.*gripss\.filtered\.vcf\..*gz$",
         r"gridss/.*high_confidence_somatic\.vcf\.bgz$",
         r"gridss/.*somatic\.filtered\.gnomAD\.sv\.rds$",
         r"gridss/.*somatic\.filtered\.sv\.no\.gnomAD\.rds$",
@@ -288,7 +289,10 @@ OUTPUT_FILES_MAPPING = {
         r"jabba/.*somatic\.filtered\.gnomAD\.sv.*___tiered\.rds$",
         r"jabba/.*somatic\.filtered\.sv.*___tiered\.rds$"
     ],
-    "structural_variants_unfiltered": r"gridss.*/.*\.gridss\.filtered\.vcf\.gz$",
+    "structural_variants_unfiltered": [
+        r"gridss/.*gripss\.vcf\..*gz$",
+        r"gridss.*/.*\.gridss\.filtered\.vcf\.gz$"
+    ],
     "structural_variants_raw": r"gridss.*/.*\.gridss\.vcf\.gz$",
     "structural_variants_chimera_filtered": r"sv_chimera_filter.*/.*\.filtered.ffpe_filtered\.vcf\.gz$",
     "structural_variants_raw_chimera_filtered": r"sv_chimera_filter.*/(?!.*\.filtered\.).*\.ffpe_filtered\.vcf\.gz$",

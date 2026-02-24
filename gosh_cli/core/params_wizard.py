@@ -140,6 +140,35 @@ def create_params_file(
             "filter_ffpe_impact": True,
             "filter_ffpe_chimera": True
         })
+    
+    custom_params_prompt = "Enter custom parameters? Y/N (default: N): "
+    custom_params = input(custom_params_prompt).strip().lower() or "n"
+    if custom_params == "y":
+        def parse_value(raw):
+            if raw.lower() == "true":
+                return True
+            if raw.lower() == "false":
+                return False
+            try:
+                return int(raw)
+            except ValueError:
+                pass
+            try:
+                return float(raw)
+            except ValueError:
+                pass
+            return raw
+
+        while True:
+            custom_params_key = input("Parameter name (Press Enter when done): ").strip()
+            if not custom_params_key:
+                confirm = input("No parameter name entered. Are you finished? Y/N (default: Y): ").strip().lower() or "y"
+                if confirm == "y":
+                    break
+                else:
+                    continue
+            raw_value = input(f"Value for '{custom_params_key}': ").strip()
+            params[custom_params_key] = parse_value(raw_value)
 
 
     print("Parameters:")
