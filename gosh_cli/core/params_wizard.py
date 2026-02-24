@@ -138,7 +138,8 @@ def create_params_file(
         print("Adding ffpe filtering parameters...")
         params.update({
             "filter_ffpe_impact": True,
-            "filter_ffpe_chimera": True
+            "filter_ffpe_chimera": True,
+            "sv_filter_ffpe_chimera": True
         })
     
     custom_params_prompt = "Enter custom parameters? Y/N (default: N): "
