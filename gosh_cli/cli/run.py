@@ -35,7 +35,6 @@ ALL_TOOLS_STR = ",".join(ALL_TOOLS)
 @click.option('--pipeline-dir',
               help='Path to nf-gos pipeline repo')
 @click.option('--samplesheet',
-              default='./samplesheet.csv',
               help='Path to samplesheet CSV file')
 @click.option('-o', '--outdir',
               default='./results/',
@@ -101,7 +100,10 @@ def pipeline(
     # for arg in extra_args:
     #     if not arg.startswith('--') and not arg.startswith('-'):
     #         raise f"Argument {arg} provided is not parsable"
-    
+    is_samplesheet_provided = not samplesheet is None
+    default_samplesheet = "./samplesheet.csv"
+    if not is_samplesheet_provided:
+        samplesheet = default_samplesheet
     
     
     # Retrieve environment defaults - already imported above
@@ -174,6 +176,12 @@ def pipeline(
         params_data = json.load(pf)
 
     # Overwrite keys from CLI flags
+
+    if not is_samplesheet_provided:
+        samplesheet = params_data.get("input", default_samplesheet)
+
+    if not os.path.exists(samplesheet):
+        raise ValueError(f'Path "{samplesheet}" does not exist! Please provide a valid samplesheet path')
     params_data["input"] = samplesheet
     params_data["outdir"] = outdir
 
