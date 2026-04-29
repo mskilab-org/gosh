@@ -11,6 +11,10 @@ type RunDir struct {
 	Path string
 }
 
+type ResultsDir struct {
+	Path string
+}
+
 type IndexMode string
 
 const (
@@ -26,6 +30,13 @@ const (
 	SourceKindLog   SourceKind = "log"
 )
 
+type ArtifactSearchLocation struct {
+	Kind        SourceKind
+	BaseDir     string
+	Patterns    []string
+	Description string
+}
+
 type SourceFingerprint struct {
 	Kind    SourceKind
 	Path    string
@@ -35,11 +46,13 @@ type SourceFingerprint struct {
 
 type ArtifactSet struct {
 	RunDir           RunDir
+	ResultsDir       ResultsDir
 	Mode             IndexMode
 	Trace            *SourceFingerprint
 	Log              *SourceFingerprint
 	SelectedAt       time.Time
 	SearchedPatterns []string
+	SearchLocations  []ArtifactSearchLocation
 	Diagnostics      []Diagnostic
 }
 
@@ -56,6 +69,20 @@ type Diagnostic struct {
 	Code     string
 	Message  string
 	Detail   string
+}
+
+type DiagnosticContextLine struct {
+	Label string
+	Value string
+}
+
+type DiagnosticBlock struct {
+	Severity DiagnosticSeverity
+	Code     string
+	Title    string
+	Context  []DiagnosticContextLine
+	Details  []string
+	Hints    []string
 }
 
 type IndexFreshness string
@@ -144,6 +171,7 @@ type StatusSummary struct {
 	FailedCount     int
 	FailedPreview   []FailedTaskPreview
 	LogOnlyFailures []LogOnlyFailure
+	LogOnlyEvidence []LogOnlyTaskEvidence
 	Diagnostics     []Diagnostic
 }
 
@@ -220,6 +248,41 @@ type LogOnlyFailure struct {
 	ErrorBlock   string
 }
 
+type LogOnlyEvidenceSourceKind string
+
+const (
+	LogOnlyEvidenceSourceLog     LogOnlyEvidenceSourceKind = "log"
+	LogOnlyEvidenceSourceWorkdir LogOnlyEvidenceSourceKind = "workdir"
+	LogOnlyEvidenceSourceCommand LogOnlyEvidenceSourceKind = "command-file"
+)
+
+type LogOnlyEvidenceCompleteness string
+
+const (
+	LogOnlyEvidencePartial LogOnlyEvidenceCompleteness = "partial"
+	LogOnlyEvidenceNone    LogOnlyEvidenceCompleteness = "none"
+)
+
+type LogOnlyEvidenceSource struct {
+	Kind   LogOnlyEvidenceSourceKind
+	Path   string
+	Detail string
+}
+
+type LogOnlyTaskEvidence struct {
+	ID                    string
+	Workdir               string
+	Process               string
+	Name                  string
+	ObservedStatus        TaskStatus
+	Exit                  *int
+	ErrorSummary          string
+	ErrorBlock            string
+	Sources               []LogOnlyEvidenceSource
+	Completeness          LogOnlyEvidenceCompleteness
+	CommandFilesAvailable bool
+}
+
 type IndexDiagnostics struct {
 	RunDir      RunDir
 	Artifacts   ArtifactSet
@@ -247,11 +310,35 @@ type TasksView struct {
 	Format      OutputFormat
 }
 
-type InspectView struct {
-	Resolution  SelectorResolution
-	Dossier     *TaskDossier
+type InspectEvidenceKind string
+
+const (
+	InspectEvidenceTraceBacked InspectEvidenceKind = "trace-backed"
+	InspectEvidenceLogOnly     InspectEvidenceKind = "log-only-partial"
+)
+
+type LogOnlySelectorResolution struct {
+	Kind        SelectorResolutionKind
+	Selector    string
+	Evidence    *LogOnlyTaskEvidence
+	Matches     []LogOnlyTaskEvidence
 	Diagnostics []Diagnostic
-	Format      OutputFormat
+}
+
+type LogOnlyTaskDossier struct {
+	Evidence    LogOnlyTaskEvidence
+	Inventory   CommandFileInventory
+	Diagnostics []Diagnostic
+}
+
+type InspectView struct {
+	Resolution        SelectorResolution
+	Dossier           *TaskDossier
+	EvidenceKind      InspectEvidenceKind
+	LogOnlyResolution *LogOnlySelectorResolution
+	LogOnlyDossier    *LogOnlyTaskDossier
+	Diagnostics       []Diagnostic
+	Format            OutputFormat
 }
 
 type IndexView struct {

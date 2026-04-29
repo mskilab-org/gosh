@@ -85,6 +85,261 @@ func TestResolveRunDirRejectsRegularFile(t *testing.T) {
 	assertNoGoshDirectory(t, workspace)
 }
 
+func TestResolveResultsDirDefaultsUnderRunDir(t *testing.T) {
+	runRoot := filepath.Join(t.TempDir(), "nf-run")
+	if err := os.MkdirAll(runRoot, 0o755); err != nil {
+		t.Fatalf("mkdir run root: %v", err)
+	}
+
+	resolved, err := ResolveResultsDir(domain.RunDir{Path: runRoot}, "")
+	if err != nil {
+		t.Fatalf("ResolveResultsDir(default) returned error: %v", err)
+	}
+
+	want := filepath.Join(runRoot, DefaultResultsDirName)
+	if resolved.Path != want {
+		t.Fatalf("resolved path = %q, want %q", resolved.Path, want)
+	}
+	if _, err := os.Stat(want); !os.IsNotExist(err) {
+		t.Fatalf("ResolveResultsDir(default) should not create %q; stat err = %v", want, err)
+	}
+	assertNoGoshDirectory(t, runRoot)
+}
+
+func TestResolveResultsDirResolvesRelativeInputAgainstRunDir(t *testing.T) {
+	workspace := t.TempDir()
+	runRoot := filepath.Join(workspace, "runs", "nf-run")
+	cwd := filepath.Join(workspace, "cwd")
+	if err := os.MkdirAll(runRoot, 0o755); err != nil {
+		t.Fatalf("mkdir run root: %v", err)
+	}
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir cwd fixture: %v", err)
+	}
+	t.Chdir(cwd)
+
+	input := filepath.Join("custom", "..", "external", "results")
+	resolved, err := ResolveResultsDir(domain.RunDir{Path: runRoot}, input)
+	if err != nil {
+		t.Fatalf("ResolveResultsDir(relative) returned error: %v", err)
+	}
+
+	want := filepath.Clean(filepath.Join(runRoot, input))
+	if resolved.Path != want {
+		t.Fatalf("resolved path = %q, want %q", resolved.Path, want)
+	}
+	cwdRelative := filepath.Clean(filepath.Join(cwd, input))
+	if resolved.Path == cwdRelative {
+		t.Fatalf("resolved path = %q, want relative input resolved against run dir instead of cwd %q", resolved.Path, cwdRelative)
+	}
+	assertNoGoshDirectory(t, runRoot)
+}
+
+func TestResolveResultsDirPreservesAbsoluteInput(t *testing.T) {
+	workspace := t.TempDir()
+	runRoot := filepath.Join(workspace, "runs", "nf-run")
+	if err := os.MkdirAll(runRoot, 0o755); err != nil {
+		t.Fatalf("mkdir run root: %v", err)
+	}
+
+	separator := string(os.PathSeparator)
+	input := workspace + separator + "external" + separator + "." + separator + "results" + separator + ".." + separator + "chosen"
+	resolved, err := ResolveResultsDir(domain.RunDir{Path: runRoot}, input)
+	if err != nil {
+		t.Fatalf("ResolveResultsDir(absolute) returned error: %v", err)
+	}
+
+	want := filepath.Clean(input)
+	if resolved.Path != want {
+		t.Fatalf("resolved path = %q, want %q", resolved.Path, want)
+	}
+	assertNoGoshDirectory(t, runRoot)
+}
+
+func TestResolveResultsDirRejectsEmptyRunDirForDefault(t *testing.T) {
+	resolved, err := ResolveResultsDir(domain.RunDir{}, "")
+	if err == nil {
+		t.Fatalf("ResolveResultsDir(empty run dir) returned nil error")
+	}
+	if !strings.Contains(err.Error(), "empty run dir") {
+		t.Fatalf("error = %q, want it to mention empty run dir", err.Error())
+	}
+	if resolved.Path != "" {
+		t.Fatalf("resolved path on error = %q, want empty", resolved.Path)
+	}
+}
+
+func TestBuildArtifactSearchLocationsDescribesRootAndPipelineInfoSearches(t *testing.T) {
+	runRoot := filepath.Join(t.TempDir(), "nf-run")
+	resultsRoot := filepath.Join(runRoot, DefaultResultsDirName)
+
+	got := BuildArtifactSearchLocations(domain.RunDir{Path: runRoot}, domain.ResultsDir{Path: resultsRoot})
+
+	if len(got) != 3 {
+		t.Fatalf("location count = %d, want 3: %+v", len(got), got)
+	}
+	assertArtifactSearchLocation(t, got[0], domain.SourceKindTrace, runRoot, TracePatterns, "run directory", "trace")
+	assertArtifactSearchLocation(t, got[1], domain.SourceKindTrace, filepath.Join(resultsRoot, PipelineInfoDirName), PipelineInfoTracePatterns, "pipeline_info", "execution trace")
+	assertArtifactSearchLocation(t, got[2], domain.SourceKindLog, runRoot, LogPatterns, "run directory", "log")
+}
+
+func TestBuildArtifactSearchLocationsUsesConfiguredResultsDirForPipelineInfo(t *testing.T) {
+	workspace := t.TempDir()
+	runRoot := filepath.Join(workspace, "runs", "nf-run")
+	resultsRoot := filepath.Join(workspace, "external", "nf-results")
+
+	got := BuildArtifactSearchLocations(domain.RunDir{Path: runRoot}, domain.ResultsDir{Path: resultsRoot})
+
+	if len(got) != 3 {
+		t.Fatalf("location count = %d, want 3: %+v", len(got), got)
+	}
+	if got[0].BaseDir != runRoot || got[2].BaseDir != runRoot {
+		t.Fatalf("root search base dirs = %q and %q, want both %q", got[0].BaseDir, got[2].BaseDir, runRoot)
+	}
+	wantPipelineInfo := filepath.Join(resultsRoot, PipelineInfoDirName)
+	if got[1].BaseDir != wantPipelineInfo {
+		t.Fatalf("pipeline-info search base dir = %q, want %q", got[1].BaseDir, wantPipelineInfo)
+	}
+}
+
+func TestBuildArtifactSearchLocationsReturnsIndependentPatternSlices(t *testing.T) {
+	originalTracePatterns := append([]string{}, TracePatterns...)
+	originalPipelineInfoTracePatterns := append([]string{}, PipelineInfoTracePatterns...)
+	originalLogPatterns := append([]string{}, LogPatterns...)
+	t.Cleanup(func() {
+		TracePatterns = originalTracePatterns
+		PipelineInfoTracePatterns = originalPipelineInfoTracePatterns
+		LogPatterns = originalLogPatterns
+	})
+
+	runRoot := filepath.Join(t.TempDir(), "nf-run")
+	resultsRoot := filepath.Join(runRoot, DefaultResultsDirName)
+	got := BuildArtifactSearchLocations(domain.RunDir{Path: runRoot}, domain.ResultsDir{Path: resultsRoot})
+	if len(got) != 3 {
+		t.Fatalf("location count = %d, want 3: %+v", len(got), got)
+	}
+
+	got[0].Patterns[0] = "mutated-root-trace-pattern"
+	got[1].Patterns[0] = "mutated-pipeline-info-pattern"
+	got[2].Patterns[0] = "mutated-log-pattern"
+
+	assertPatterns(t, TracePatterns, originalTracePatterns)
+	assertPatterns(t, PipelineInfoTracePatterns, originalPipelineInfoTracePatterns)
+	assertPatterns(t, LogPatterns, originalLogPatterns)
+
+	next := BuildArtifactSearchLocations(domain.RunDir{Path: runRoot}, domain.ResultsDir{Path: resultsRoot})
+	assertPatterns(t, next[0].Patterns, originalTracePatterns)
+	assertPatterns(t, next[1].Patterns, originalPipelineInfoTracePatterns)
+	assertPatterns(t, next[2].Patterns, originalLogPatterns)
+}
+
+func TestFindCandidateSourcesInLocationsReturnsSortedFingerprintsAcrossLocations(t *testing.T) {
+	workspace := t.TempDir()
+	runRoot := filepath.Join(workspace, "run")
+	resultsRoot := filepath.Join(workspace, "results")
+	pipelineInfoRoot := filepath.Join(resultsRoot, PipelineInfoDirName)
+	if err := os.MkdirAll(runRoot, 0o755); err != nil {
+		t.Fatalf("mkdir run root: %v", err)
+	}
+	if err := os.MkdirAll(pipelineInfoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir pipeline_info fixture dir: %v", err)
+	}
+
+	base := time.Unix(1_700_000_000, 0)
+	rootTrace := writeSourceFixture(t, runRoot, "trace-root.txt", []byte("root\n"), base.Add(2*time.Second))
+	pipelineTrace := writeSourceFixture(t, pipelineInfoRoot, "execution_trace_2026-02-23.txt", []byte("pipeline\n"), base.Add(3*time.Second))
+	log := writeSourceFixture(t, runRoot, ".nextflow.log", []byte("log\n"), base.Add(time.Second))
+	writeSourceFixture(t, pipelineInfoRoot, "trace-not-matched.txt", []byte("ignored\n"), base.Add(4*time.Second))
+
+	locations := BuildArtifactSearchLocations(domain.RunDir{Path: runRoot}, domain.ResultsDir{Path: resultsRoot})
+	got, err := FindCandidateSourcesInLocations(locations)
+	if err != nil {
+		t.Fatalf("FindCandidateSourcesInLocations(configured locations) returned error: %v", err)
+	}
+
+	want := []domain.SourceFingerprint{
+		{Kind: domain.SourceKindTrace, Path: pipelineTrace, ModTime: base.Add(3 * time.Second), Size: int64(len("pipeline\n"))},
+		{Kind: domain.SourceKindLog, Path: log, ModTime: base.Add(time.Second), Size: int64(len("log\n"))},
+		{Kind: domain.SourceKindTrace, Path: rootTrace, ModTime: base.Add(2 * time.Second), Size: int64(len("root\n"))},
+	}
+	assertSourceFingerprints(t, got, want)
+	assertNoGoshDirectory(t, runRoot)
+}
+
+func TestFindCandidateSourcesInLocationsReturnsEmptyForNoLocations(t *testing.T) {
+	got, err := FindCandidateSourcesInLocations(nil)
+	if err != nil {
+		t.Fatalf("FindCandidateSourcesInLocations(nil) returned error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("candidate count = %d, want 0: %+v", len(got), got)
+	}
+}
+
+func TestFindCandidateSourcesInLocationsDeduplicatesCleanPaths(t *testing.T) {
+	runRoot := t.TempDir()
+	base := time.Unix(1_700_000_000, 0)
+	trace := writeSourceFixture(t, runRoot, "trace-duplicate.txt", []byte("trace\n"), base)
+
+	locations := []domain.ArtifactSearchLocation{
+		{Kind: domain.SourceKindTrace, BaseDir: runRoot, Patterns: []string{"trace*.txt"}, Description: "root trace files"},
+		{Kind: domain.SourceKindTrace, BaseDir: filepath.Join(runRoot, "."), Patterns: []string{"trace-duplicate.txt"}, Description: "same trace via clean path"},
+	}
+	got, err := FindCandidateSourcesInLocations(locations)
+	if err != nil {
+		t.Fatalf("FindCandidateSourcesInLocations(duplicate paths) returned error: %v", err)
+	}
+
+	want := []domain.SourceFingerprint{
+		{Kind: domain.SourceKindTrace, Path: trace, ModTime: base, Size: int64(len("trace\n"))},
+	}
+	assertSourceFingerprints(t, got, want)
+	assertNoGoshDirectory(t, runRoot)
+}
+
+func TestFindCandidateSourcesInLocationsIgnoresNonRegularMatches(t *testing.T) {
+	runRoot := t.TempDir()
+	base := time.Unix(1_700_000_000, 0)
+	trace := writeSourceFixture(t, runRoot, "trace-ok.txt", []byte("ok\n"), base)
+	matchingDir := filepath.Join(runRoot, "trace-dir.txt")
+	if err := os.Mkdir(matchingDir, 0o755); err != nil {
+		t.Fatalf("mkdir matching directory fixture: %v", err)
+	}
+
+	locations := []domain.ArtifactSearchLocation{
+		{Kind: domain.SourceKindTrace, BaseDir: runRoot, Patterns: []string{"trace*.txt"}, Description: "root trace files"},
+	}
+	got, err := FindCandidateSourcesInLocations(locations)
+	if err != nil {
+		t.Fatalf("FindCandidateSourcesInLocations(with matching directory) returned error: %v", err)
+	}
+
+	want := []domain.SourceFingerprint{
+		{Kind: domain.SourceKindTrace, Path: trace, ModTime: base, Size: int64(len("ok\n"))},
+	}
+	assertSourceFingerprints(t, got, want)
+	assertNoGoshDirectory(t, runRoot)
+}
+
+func TestFindCandidateSourcesInLocationsRejectsBadPattern(t *testing.T) {
+	runRoot := t.TempDir()
+	locations := []domain.ArtifactSearchLocation{
+		{Kind: domain.SourceKindTrace, BaseDir: runRoot, Patterns: []string{"["}, Description: "broken trace files"},
+	}
+
+	got, err := FindCandidateSourcesInLocations(locations)
+	if err == nil {
+		t.Fatalf("FindCandidateSourcesInLocations(bad pattern) returned nil error")
+	}
+	if !strings.Contains(err.Error(), "glob source pattern") {
+		t.Fatalf("error = %q, want it to mention glob source pattern", err.Error())
+	}
+	if len(got) != 0 {
+		t.Fatalf("candidates on error = %+v, want none", got)
+	}
+	assertNoGoshDirectory(t, runRoot)
+}
+
 func TestIndexPathComputesRunLocalSQLitePath(t *testing.T) {
 	runRoot := filepath.Join(t.TempDir(), "nf-run")
 	if err := os.MkdirAll(runRoot, 0o755); err != nil {
@@ -95,6 +350,183 @@ func TestIndexPathComputesRunLocalSQLitePath(t *testing.T) {
 	want := filepath.Join(runRoot, IndexDirName, IndexFileName)
 	if got != want {
 		t.Fatalf("IndexPath() = %q, want %q", got, want)
+	}
+	assertNoGoshDirectory(t, runRoot)
+}
+
+func TestDiscoverArtifactsWithResultsDirSelectsNewestTraceAcrossRootAndPipelineInfoAndPairsLog(t *testing.T) {
+	workspace := t.TempDir()
+	runRoot := filepath.Join(workspace, "run")
+	resultsRoot := filepath.Join(workspace, "external-results")
+	pipelineInfoRoot := filepath.Join(resultsRoot, PipelineInfoDirName)
+	if err := os.MkdirAll(runRoot, 0o755); err != nil {
+		t.Fatalf("mkdir run root: %v", err)
+	}
+	if err := os.MkdirAll(pipelineInfoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir pipeline_info root: %v", err)
+	}
+
+	base := time.Unix(1_700_000_000, 0)
+	writeSourceFixture(t, runRoot, "trace-root.txt", []byte("root older\n"), base.Add(time.Second))
+	selectedTrace := writeSourceFixture(t, pipelineInfoRoot, "execution_trace_2026-02-23.txt", []byte("pipeline newer\n"), base.Add(4*time.Second))
+	writeSourceFixture(t, pipelineInfoRoot, "timeline.html", []byte("ignored timeline\n"), base.Add(5*time.Second))
+	writeSourceFixture(t, runRoot, ".nextflow_1.log", []byte("old log\n"), base.Add(2*time.Second))
+	selectedLog := writeSourceFixture(t, runRoot, ".nextflow.log", []byte("new log\n"), base.Add(3*time.Second))
+
+	before := time.Now().UTC()
+	got, err := DiscoverArtifactsWithResultsDir(context.Background(), domain.RunDir{Path: runRoot}, domain.ResultsDir{Path: resultsRoot})
+	after := time.Now().UTC()
+	if err != nil {
+		t.Fatalf("DiscoverArtifactsWithResultsDir(pipeline trace) returned error: %v", err)
+	}
+
+	if got.Mode != domain.IndexModeTraceBacked {
+		t.Fatalf("mode = %q, want %q", got.Mode, domain.IndexModeTraceBacked)
+	}
+	assertResultsDiscoverySnapshot(t, got, runRoot, resultsRoot, before, after)
+	assertArtifactSource(t, got.Trace, domain.SourceKindTrace, selectedTrace, base.Add(4*time.Second), int64(len("pipeline newer\n")))
+	assertArtifactSource(t, got.Log, domain.SourceKindLog, selectedLog, base.Add(3*time.Second), int64(len("new log\n")))
+	if len(got.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %+v, want none", got.Diagnostics)
+	}
+	assertNoGoshDirectory(t, runRoot)
+	assertNoGoshDirectory(t, resultsRoot)
+}
+
+func TestDiscoverArtifactsWithResultsDirBreaksTraceTiesByPathAcrossLocations(t *testing.T) {
+	workspace := t.TempDir()
+	runRoot := filepath.Join(workspace, "run")
+	resultsRoot := filepath.Join(workspace, "results")
+	pipelineInfoRoot := filepath.Join(resultsRoot, PipelineInfoDirName)
+	if err := os.MkdirAll(runRoot, 0o755); err != nil {
+		t.Fatalf("mkdir run root: %v", err)
+	}
+	if err := os.MkdirAll(pipelineInfoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir pipeline_info root: %v", err)
+	}
+
+	tied := time.Unix(1_700_000_000, 0)
+	writeSourceFixture(t, runRoot, "trace-root.txt", []byte("root\n"), tied)
+	selectedTrace := writeSourceFixture(t, pipelineInfoRoot, "execution_trace_2026-02-23.txt", []byte("pipeline\n"), tied)
+
+	before := time.Now().UTC()
+	got, err := DiscoverArtifactsWithResultsDir(context.Background(), domain.RunDir{Path: runRoot}, domain.ResultsDir{Path: resultsRoot})
+	after := time.Now().UTC()
+	if err != nil {
+		t.Fatalf("DiscoverArtifactsWithResultsDir(tied traces) returned error: %v", err)
+	}
+
+	if got.Mode != domain.IndexModeTraceBacked {
+		t.Fatalf("mode = %q, want %q", got.Mode, domain.IndexModeTraceBacked)
+	}
+	assertResultsDiscoverySnapshot(t, got, runRoot, resultsRoot, before, after)
+	assertArtifactSource(t, got.Trace, domain.SourceKindTrace, selectedTrace, tied, int64(len("pipeline\n")))
+	if got.Log != nil {
+		t.Fatalf("log = %+v, want nil when no supported log exists", got.Log)
+	}
+	assertNoGoshDirectory(t, runRoot)
+	assertNoGoshDirectory(t, resultsRoot)
+}
+
+func TestDiscoverArtifactsWithResultsDirUsesNewestLogOnlyWhenNoTraceExistsAnywhere(t *testing.T) {
+	workspace := t.TempDir()
+	runRoot := filepath.Join(workspace, "run")
+	resultsRoot := filepath.Join(workspace, "results")
+	pipelineInfoRoot := filepath.Join(resultsRoot, PipelineInfoDirName)
+	if err := os.MkdirAll(runRoot, 0o755); err != nil {
+		t.Fatalf("mkdir run root: %v", err)
+	}
+	if err := os.MkdirAll(pipelineInfoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir pipeline_info root: %v", err)
+	}
+
+	base := time.Unix(1_700_000_000, 0)
+	writeSourceFixture(t, runRoot, "pipeline.log", []byte("unsupported log name\n"), base.Add(4*time.Second))
+	writeSourceFixture(t, pipelineInfoRoot, "trace-not-matched.txt", []byte("ignored trace name\n"), base.Add(5*time.Second))
+	writeSourceFixture(t, runRoot, ".nextflow_1.log", []byte("old log\n"), base.Add(time.Second))
+	selectedLog := writeSourceFixture(t, runRoot, ".nextflow_2.log", []byte("new log\n"), base.Add(2*time.Second))
+
+	before := time.Now().UTC()
+	got, err := DiscoverArtifactsWithResultsDir(context.Background(), domain.RunDir{Path: runRoot}, domain.ResultsDir{Path: resultsRoot})
+	after := time.Now().UTC()
+	if err != nil {
+		t.Fatalf("DiscoverArtifactsWithResultsDir(log-only) returned error: %v", err)
+	}
+
+	if got.Mode != domain.IndexModeLogOnly {
+		t.Fatalf("mode = %q, want %q", got.Mode, domain.IndexModeLogOnly)
+	}
+	assertResultsDiscoverySnapshot(t, got, runRoot, resultsRoot, before, after)
+	if got.Trace != nil {
+		t.Fatalf("trace = %+v, want nil in log-only mode", got.Trace)
+	}
+	assertArtifactSource(t, got.Log, domain.SourceKindLog, selectedLog, base.Add(2*time.Second), int64(len("new log\n")))
+	if len(got.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %+v, want none", got.Diagnostics)
+	}
+	assertNoGoshDirectory(t, runRoot)
+	assertNoGoshDirectory(t, resultsRoot)
+}
+
+func TestDiscoverArtifactsUsesDefaultResultsPipelineInfoTrace(t *testing.T) {
+	workspace := t.TempDir()
+	cwd := filepath.Join(workspace, "cwd")
+	runRoot := filepath.Join(workspace, "runs", "nf-run")
+	defaultResultsRoot := filepath.Join(runRoot, DefaultResultsDirName)
+	pipelineInfoRoot := filepath.Join(defaultResultsRoot, PipelineInfoDirName)
+	cwdPipelineInfoRoot := filepath.Join(cwd, DefaultResultsDirName, PipelineInfoDirName)
+	if err := os.MkdirAll(pipelineInfoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir default pipeline_info root: %v", err)
+	}
+	if err := os.MkdirAll(cwdPipelineInfoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir cwd pipeline_info decoy root: %v", err)
+	}
+	t.Chdir(cwd)
+
+	base := time.Unix(1_700_000_000, 0)
+	selectedTrace := writeSourceFixture(t, pipelineInfoRoot, "execution_trace_2026-02-23.txt", []byte("pipeline trace\n"), base.Add(2*time.Second))
+	selectedLog := writeSourceFixture(t, runRoot, ".nextflow.log", []byte("run log\n"), base.Add(time.Second))
+	writeSourceFixture(t, cwdPipelineInfoRoot, "execution_trace_decoy.txt", []byte("cwd decoy\n"), base.Add(time.Hour))
+
+	before := time.Now().UTC()
+	got, err := DiscoverArtifacts(context.Background(), domain.RunDir{Path: runRoot})
+	after := time.Now().UTC()
+	if err != nil {
+		t.Fatalf("DiscoverArtifacts(default pipeline-info trace) returned error: %v", err)
+	}
+
+	if got.Mode != domain.IndexModeTraceBacked {
+		t.Fatalf("mode = %q, want %q", got.Mode, domain.IndexModeTraceBacked)
+	}
+	assertDiscoverySnapshot(t, got, runRoot, before, after)
+	assertArtifactSource(t, got.Trace, domain.SourceKindTrace, selectedTrace, base.Add(2*time.Second), int64(len("pipeline trace\n")))
+	assertArtifactSource(t, got.Log, domain.SourceKindLog, selectedLog, base.Add(time.Second), int64(len("run log\n")))
+	if len(got.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %+v, want none", got.Diagnostics)
+	}
+	assertNoGoshDirectory(t, runRoot)
+	assertNoGoshDirectory(t, defaultResultsRoot)
+	assertNoGoshDirectory(t, cwd)
+}
+
+func TestDiscoverArtifactsWithNilContextReturnsDefaultDiscoverySnapshot(t *testing.T) {
+	runRoot := t.TempDir()
+
+	before := time.Now().UTC()
+	got, err := DiscoverArtifacts(nil, domain.RunDir{Path: runRoot})
+	after := time.Now().UTC()
+	if err == nil {
+		t.Fatalf("DiscoverArtifacts(nil context) returned nil error")
+	}
+	if err.Error() != "discover artifacts: nil context" {
+		t.Fatalf("error = %q, want %q", err.Error(), "discover artifacts: nil context")
+	}
+	assertDiscoverySnapshot(t, got, runRoot, before, after)
+	if got.Mode != "" {
+		t.Fatalf("mode = %q, want empty on nil context", got.Mode)
+	}
+	if got.Trace != nil || got.Log != nil {
+		t.Fatalf("trace/log = %+v/%+v, want nil on nil context", got.Trace, got.Log)
 	}
 	assertNoGoshDirectory(t, runRoot)
 }
@@ -514,12 +946,38 @@ func TestUnsupportedArtifactDiagnosticsReportsUnsupportedRunDirAndSearchedPatter
 	if missing.Message != wantMessage {
 		t.Fatalf("missing artifact message = %q, want %q", missing.Message, wantMessage)
 	}
-	wantDetail := "Searched trace patterns: " + strings.Join(TracePatterns, ", ") + "\n" +
-		"Searched log patterns: " + strings.Join(LogPatterns, ", ")
+	wantDetail := "Searched trace locations:\n" +
+		"- " + runRoot + " (run directory trace files): " + strings.Join(TracePatterns, ", ") + "\n" +
+		"- " + filepath.Join(runRoot, DefaultResultsDirName, PipelineInfoDirName) + " (pipeline_info execution trace files): " + strings.Join(PipelineInfoTracePatterns, ", ") + "\n" +
+		"Searched log locations:\n" +
+		"- " + runRoot + " (run directory log files): " + strings.Join(LogPatterns, ", ")
 	if missing.Detail != wantDetail {
 		t.Fatalf("missing artifact detail = %q, want %q", missing.Detail, wantDetail)
 	}
 	assertNoGoshDirectory(t, runRoot)
+}
+
+func TestUnsupportedArtifactDiagnosticsDoNotClaimLogOnlyCompleteness(t *testing.T) {
+	got := UnsupportedArtifactDiagnostics(domain.RunDir{Path: "/tmp/nf-run"})
+
+	var combined strings.Builder
+	for _, diagnostic := range got {
+		combined.WriteString(diagnostic.Message)
+		combined.WriteByte('\n')
+		combined.WriteString(diagnostic.Detail)
+		combined.WriteByte('\n')
+	}
+	for _, forbidden := range []string{
+		"log-only completeness",
+		"complete log-only",
+		"log-only complete",
+		"logs can build a complete",
+		"complete task/resource/status data from logs",
+	} {
+		if strings.Contains(combined.String(), forbidden) {
+			t.Fatalf("unsupported diagnostics contain unsupported log-only completeness claim %q in %q", forbidden, combined.String())
+		}
+	}
 }
 
 func TestUnsupportedArtifactDiagnosticsIncludesWithTraceRecommendation(t *testing.T) {
@@ -562,16 +1020,7 @@ func TestUnsupportedArtifactDiagnosticsAreDeterministic(t *testing.T) {
 
 func assertDiscoverySnapshot(t *testing.T, got domain.ArtifactSet, wantRunRoot string, before time.Time, after time.Time) {
 	t.Helper()
-	if got.RunDir.Path != wantRunRoot {
-		t.Fatalf("run dir = %q, want %q", got.RunDir.Path, wantRunRoot)
-	}
-	if got.SelectedAt.IsZero() {
-		t.Fatalf("selected_at is zero")
-	}
-	if got.SelectedAt.Before(before) || got.SelectedAt.After(after) {
-		t.Fatalf("selected_at = %s, want between %s and %s", got.SelectedAt, before, after)
-	}
-	assertSearchedPatterns(t, got.SearchedPatterns)
+	assertResultsDiscoverySnapshot(t, got, wantRunRoot, filepath.Join(wantRunRoot, DefaultResultsDirName), before, after)
 }
 
 func assertSearchedPatterns(t *testing.T, got []string) {
@@ -584,6 +1033,75 @@ func assertSearchedPatterns(t *testing.T, got []string) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("searched pattern %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func assertResultsDiscoverySnapshot(t *testing.T, got domain.ArtifactSet, wantRunRoot string, wantResultsRoot string, before time.Time, after time.Time) {
+	t.Helper()
+	if got.RunDir.Path != wantRunRoot {
+		t.Fatalf("run dir = %q, want %q", got.RunDir.Path, wantRunRoot)
+	}
+	if got.ResultsDir.Path != wantResultsRoot {
+		t.Fatalf("results dir = %q, want %q", got.ResultsDir.Path, wantResultsRoot)
+	}
+	if got.SelectedAt.IsZero() {
+		t.Fatalf("selected_at is zero")
+	}
+	if got.SelectedAt.Before(before) || got.SelectedAt.After(after) {
+		t.Fatalf("selected_at = %s, want between %s and %s", got.SelectedAt, before, after)
+	}
+	assertResultsSearchedPatterns(t, got.SearchedPatterns)
+	if len(got.SearchLocations) != 3 {
+		t.Fatalf("search locations count = %d, want 3: %+v", len(got.SearchLocations), got.SearchLocations)
+	}
+	assertArtifactSearchLocation(t, got.SearchLocations[0], domain.SourceKindTrace, wantRunRoot, TracePatterns, "run directory", "trace")
+	assertArtifactSearchLocation(t, got.SearchLocations[1], domain.SourceKindTrace, filepath.Join(wantResultsRoot, PipelineInfoDirName), PipelineInfoTracePatterns, "pipeline_info", "execution trace")
+	assertArtifactSearchLocation(t, got.SearchLocations[2], domain.SourceKindLog, wantRunRoot, LogPatterns, "run directory", "log")
+}
+
+func assertResultsSearchedPatterns(t *testing.T, got []string) {
+	t.Helper()
+	want := append([]string{}, TracePatterns...)
+	want = append(want, PipelineInfoTracePatterns...)
+	want = append(want, LogPatterns...)
+	if len(got) != len(want) {
+		t.Fatalf("searched patterns count = %d, want %d: got=%+v want=%+v", len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("searched pattern %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func assertArtifactSearchLocation(t *testing.T, got domain.ArtifactSearchLocation, wantKind domain.SourceKind, wantBaseDir string, wantPatterns []string, wantDescriptionSubstrings ...string) {
+	t.Helper()
+	if got.Kind != wantKind {
+		t.Fatalf("location kind = %q, want %q", got.Kind, wantKind)
+	}
+	if got.BaseDir != wantBaseDir {
+		t.Fatalf("location base dir = %q, want %q", got.BaseDir, wantBaseDir)
+	}
+	assertPatterns(t, got.Patterns, wantPatterns)
+	if got.Description == "" {
+		t.Fatalf("location description is empty")
+	}
+	for _, substring := range wantDescriptionSubstrings {
+		if !strings.Contains(got.Description, substring) {
+			t.Fatalf("location description = %q, want it to contain %q", got.Description, substring)
+		}
+	}
+}
+
+func assertPatterns(t *testing.T, got []string, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("pattern count = %d, want %d: got=%+v want=%+v", len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("pattern %d = %q, want %q", i, got[i], want[i])
 		}
 	}
 }

@@ -12,12 +12,15 @@ import (
 )
 
 const (
-	DefaultRunDir = "."
-	IndexDirName  = ".gosh"
-	IndexFileName = "index.sqlite"
+	DefaultRunDir         = "."
+	DefaultResultsDirName = "results"
+	PipelineInfoDirName   = "pipeline_info"
+	IndexDirName          = ".gosh"
+	IndexFileName         = "index.sqlite"
 )
 
 var TracePatterns = []string{"trace*.txt", "trace*.csv", "trace*.tsv"}
+var PipelineInfoTracePatterns = []string{"execution_trace*.txt", "execution_trace*.tsv", "execution_trace*.csv"}
 var LogPatterns = []string{".nextflow.log", ".nextflow_*.log"}
 
 func ResolveRunDir(input string) (domain.RunDir, error) {
@@ -45,29 +48,115 @@ func IndexPath(runDir domain.RunDir) string {
 	return filepath.Join(runDir.Path, IndexDirName, IndexFileName)
 }
 
-func chooseArtifactSource(label string, sources []domain.SourceFingerprint) (*domain.SourceFingerprint, error) {
-	source, err := ChooseNewestSource(sources)
-	if err != nil {
-		return nil, fmt.Errorf("choose %s artifact: %w", label, err)
+func ResolveResultsDir(runDir domain.RunDir, input string) (domain.ResultsDir, error) {
+	if runDir.Path == "" {
+		return domain.ResultsDir{}, fmt.Errorf("resolve results dir: empty run dir")
 	}
-	return source, nil
+
+	path := input
+	if path == "" {
+		path = filepath.Join(runDir.Path, DefaultResultsDirName)
+	} else if !filepath.IsAbs(path) {
+		path = filepath.Join(runDir.Path, path)
+	}
+
+	return domain.ResultsDir{Path: filepath.Clean(path)}, nil
 }
 
-func chooseOptionalArtifactSource(label string, sources []domain.SourceFingerprint) (*domain.SourceFingerprint, error) {
-	if len(sources) == 0 {
-		return nil, nil
+func BuildArtifactSearchLocations(runDir domain.RunDir, resultsDir domain.ResultsDir) []domain.ArtifactSearchLocation {
+	copyPatterns := func(patterns []string) []string {
+		copied := make([]string, len(patterns))
+		copy(copied, patterns)
+		return copied
 	}
-	return chooseArtifactSource(label, sources)
+
+	return []domain.ArtifactSearchLocation{
+		{
+			Kind:        domain.SourceKindTrace,
+			BaseDir:     runDir.Path,
+			Patterns:    copyPatterns(TracePatterns),
+			Description: "run directory trace files",
+		},
+		{
+			Kind:        domain.SourceKindTrace,
+			BaseDir:     filepath.Join(resultsDir.Path, PipelineInfoDirName),
+			Patterns:    copyPatterns(PipelineInfoTracePatterns),
+			Description: "pipeline_info execution trace files",
+		},
+		{
+			Kind:        domain.SourceKindLog,
+			BaseDir:     runDir.Path,
+			Patterns:    copyPatterns(LogPatterns),
+			Description: "run directory log files",
+		},
+	}
 }
 
-func DiscoverArtifacts(ctx context.Context, runDir domain.RunDir) (domain.ArtifactSet, error) {
-	searchedPatterns := append([]string{}, TracePatterns...)
-	searchedPatterns = append(searchedPatterns, LogPatterns...)
+type sourceFingerprintCollector struct {
+	sources   []domain.SourceFingerprint
+	seenPaths map[string]struct{}
+}
+
+func newSourceFingerprintCollector() sourceFingerprintCollector {
+	return sourceFingerprintCollector{
+		sources:   make([]domain.SourceFingerprint, 0),
+		seenPaths: make(map[string]struct{}),
+	}
+}
+
+func (collector *sourceFingerprintCollector) add(source domain.SourceFingerprint) {
+	if _, seen := collector.seenPaths[source.Path]; seen {
+		return
+	}
+	collector.seenPaths[source.Path] = struct{}{}
+	collector.sources = append(collector.sources, source)
+}
+
+func (collector *sourceFingerprintCollector) addAll(sources []domain.SourceFingerprint) {
+	for _, source := range sources {
+		collector.add(source)
+	}
+}
+
+func (collector *sourceFingerprintCollector) sorted() []domain.SourceFingerprint {
+	sort.Slice(collector.sources, func(i, j int) bool {
+		return collector.sources[i].Path < collector.sources[j].Path
+	})
+	return collector.sources
+}
+
+func FindCandidateSourcesInLocations(locations []domain.ArtifactSearchLocation) ([]domain.SourceFingerprint, error) {
+	collector := newSourceFingerprintCollector()
+
+	for _, location := range locations {
+		locationSources, err := FindCandidateSources(domain.RunDir{Path: location.BaseDir}, location.Kind, location.Patterns)
+		if err != nil {
+			description := location.Description
+			if description == "" {
+				description = location.BaseDir
+			}
+			return nil, fmt.Errorf("find candidate sources in %q: %w", description, err)
+		}
+
+		collector.addAll(locationSources)
+	}
+
+	return collector.sorted(), nil
+}
+
+func DiscoverArtifactsWithResultsDir(ctx context.Context, runDir domain.RunDir, resultsDir domain.ResultsDir) (domain.ArtifactSet, error) {
+	searchLocations := BuildArtifactSearchLocations(runDir, resultsDir)
+	searchedPatterns := make([]string, 0)
+	for _, location := range searchLocations {
+		searchedPatterns = append(searchedPatterns, location.Patterns...)
+	}
 
 	artifacts := domain.ArtifactSet{
 		RunDir:           runDir,
+		ResultsDir:       resultsDir,
 		SelectedAt:       time.Now().UTC(),
 		SearchedPatterns: searchedPatterns,
+		SearchLocations:  searchLocations,
 	}
 
 	if ctx == nil {
@@ -77,20 +166,23 @@ func DiscoverArtifacts(ctx context.Context, runDir domain.RunDir) (domain.Artifa
 		return artifacts, err
 	}
 
-	traceSources, err := FindCandidateSources(runDir, domain.SourceKindTrace, TracePatterns)
+	sources, err := FindCandidateSourcesInLocations(searchLocations)
 	if err != nil {
-		return artifacts, fmt.Errorf("discover trace artifacts: %w", err)
+		return artifacts, fmt.Errorf("discover artifact sources: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return artifacts, err
 	}
 
-	logSources, err := FindCandidateSources(runDir, domain.SourceKindLog, LogPatterns)
-	if err != nil {
-		return artifacts, fmt.Errorf("discover log artifacts: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return artifacts, err
+	traceSources := make([]domain.SourceFingerprint, 0)
+	logSources := make([]domain.SourceFingerprint, 0)
+	for _, source := range sources {
+		switch source.Kind {
+		case domain.SourceKindTrace:
+			traceSources = append(traceSources, source)
+		case domain.SourceKindLog:
+			logSources = append(logSources, source)
+		}
 	}
 
 	log, err := chooseOptionalArtifactSource("log", logSources)
@@ -120,9 +212,32 @@ func DiscoverArtifacts(ctx context.Context, runDir domain.RunDir) (domain.Artifa
 	return artifacts, nil
 }
 
+func chooseArtifactSource(label string, sources []domain.SourceFingerprint) (*domain.SourceFingerprint, error) {
+	source, err := ChooseNewestSource(sources)
+	if err != nil {
+		return nil, fmt.Errorf("choose %s artifact: %w", label, err)
+	}
+	return source, nil
+}
+
+func chooseOptionalArtifactSource(label string, sources []domain.SourceFingerprint) (*domain.SourceFingerprint, error) {
+	if len(sources) == 0 {
+		return nil, nil
+	}
+	return chooseArtifactSource(label, sources)
+}
+
+func DiscoverArtifacts(ctx context.Context, runDir domain.RunDir) (domain.ArtifactSet, error) {
+	resultsDir, err := ResolveResultsDir(runDir, "")
+	if err != nil {
+		return domain.ArtifactSet{RunDir: runDir}, err
+	}
+
+	return DiscoverArtifactsWithResultsDir(ctx, runDir, resultsDir)
+}
+
 func FindCandidateSources(runDir domain.RunDir, kind domain.SourceKind, patterns []string) ([]domain.SourceFingerprint, error) {
-	sources := make([]domain.SourceFingerprint, 0)
-	seenPaths := make(map[string]struct{})
+	collector := newSourceFingerprintCollector()
 
 	for _, pattern := range patterns {
 		globPattern := filepath.Join(runDir.Path, pattern)
@@ -140,18 +255,11 @@ func FindCandidateSources(runDir domain.RunDir, kind domain.SourceKind, patterns
 				}
 				return nil, fmt.Errorf("fingerprint source %q: %w", match, err)
 			}
-			if _, seen := seenPaths[fingerprint.Path]; seen {
-				continue
-			}
-			seenPaths[fingerprint.Path] = struct{}{}
-			sources = append(sources, fingerprint)
+			collector.add(fingerprint)
 		}
 	}
 
-	sort.Slice(sources, func(i, j int) bool {
-		return sources[i].Path < sources[j].Path
-	})
-	return sources, nil
+	return collector.sorted(), nil
 }
 
 func SourceFingerprintForPath(kind domain.SourceKind, path string) (domain.SourceFingerprint, error) {
@@ -211,20 +319,49 @@ func UnsupportedArtifactDiagnostics(runDir domain.RunDir) []domain.Diagnostic {
 		}
 		return joined
 	}
+	formatLocations := func(locations []domain.ArtifactSearchLocation) string {
+		if len(locations) == 0 {
+			return ""
+		}
+
+		formatted := ""
+		for i, location := range locations {
+			if i > 0 {
+				formatted += "\n"
+			}
+			formatted += "- " + location.BaseDir
+			if location.Description != "" {
+				formatted += " (" + location.Description + ")"
+			}
+			formatted += ": " + joinPatterns(location.Patterns)
+		}
+		return formatted
+	}
+
+	resultsDir, err := ResolveResultsDir(runDir, "")
+	if err != nil {
+		resultsDir = domain.ResultsDir{Path: filepath.Join(runDir.Path, DefaultResultsDirName)}
+	}
+	locations := BuildArtifactSearchLocations(runDir, resultsDir)
+	traceLocations := make([]domain.ArtifactSearchLocation, 0)
+	logLocations := make([]domain.ArtifactSearchLocation, 0)
+	for _, location := range locations {
+		switch location.Kind {
+		case domain.SourceKindTrace:
+			traceLocations = append(traceLocations, location)
+		case domain.SourceKindLog:
+			logLocations = append(logLocations, location)
+		}
+	}
 
 	return []domain.Diagnostic{
 		{
 			Severity: domain.DiagnosticError,
 			Code:     "unsupported_artifacts",
 			Message:  "No supported Nextflow trace or log artifacts found in " + runDir.Path,
-			Detail: "Searched trace patterns: " + joinPatterns(TracePatterns) + "\n" +
-				"Searched log patterns: " + joinPatterns(LogPatterns),
+			Detail: "Searched trace locations:\n" + formatLocations(traceLocations) + "\n" +
+				"Searched log locations:\n" + formatLocations(logLocations),
 		},
-		{
-			Severity: domain.DiagnosticInfo,
-			Code:     "nextflow_with_trace_recommended",
-			Message:  "Run future Nextflow workflows with -with-trace",
-			Detail:   "Use `nextflow run ... -with-trace` for future runs so gosh can build a complete trace-backed task index.",
-		},
+		domain.NextflowTraceRecommendationDiagnostic(),
 	}
 }

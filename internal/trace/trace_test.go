@@ -11,6 +11,517 @@ import (
 	"github.com/mskilab-org/gosh/internal/domain"
 )
 
+func TestDefaultColumnAliasSetIncludesRootTraceAliases(t *testing.T) {
+	aliases := DefaultColumnAliasSet()
+	tests := []struct {
+		name string
+		got  []string
+		want string
+	}{
+		{name: "hash", got: aliases.Hash, want: "hash"},
+		{name: "workdir", got: aliases.Workdir, want: "workdir"},
+		{name: "process", got: aliases.Process, want: "process"},
+		{name: "name", got: aliases.Name, want: "name"},
+		{name: "tag", got: aliases.Tag, want: "tag"},
+		{name: "status", got: aliases.Status, want: "status"},
+		{name: "exit", got: aliases.Exit, want: "exit"},
+		{name: "duration", got: aliases.Duration, want: "duration"},
+		{name: "realtime", got: aliases.Realtime, want: "realtime"},
+		{name: "cpus", got: aliases.CPU, want: "cpus"},
+		{name: "memory", got: aliases.Memory, want: "memory"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requireAlias(t, tt.got, tt.want)
+		})
+	}
+}
+
+func TestDefaultColumnAliasSetIncludesNFCoreExecutionTraceAliases(t *testing.T) {
+	aliases := DefaultColumnAliasSet()
+	tests := []struct {
+		name string
+		got  []string
+		want string
+	}{
+		{name: "task_id", got: aliases.TaskID, want: "task_id"},
+		{name: "hash", got: aliases.Hash, want: "hash"},
+		{name: "native_id", got: aliases.NativeID, want: "native_id"},
+		{name: "name", got: aliases.Name, want: "name"},
+		{name: "status", got: aliases.Status, want: "status"},
+		{name: "exit", got: aliases.Exit, want: "exit"},
+		{name: "duration", got: aliases.Duration, want: "duration"},
+		{name: "realtime", got: aliases.Realtime, want: "realtime"},
+		{name: "%cpu", got: aliases.CPU, want: "%cpu"},
+		{name: "peak_rss", got: aliases.PeakRSS, want: "peak_rss"},
+		{name: "peak_vmem", got: aliases.PeakVMem, want: "peak_vmem"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requireAlias(t, tt.got, tt.want)
+		})
+	}
+}
+
+func TestDefaultColumnAliasSetHasNoBlankOrDuplicateAliases(t *testing.T) {
+	aliases := DefaultColumnAliasSet()
+	groups := []struct {
+		name    string
+		aliases []string
+	}{
+		{name: "TaskID", aliases: aliases.TaskID},
+		{name: "Hash", aliases: aliases.Hash},
+		{name: "NativeID", aliases: aliases.NativeID},
+		{name: "Workdir", aliases: aliases.Workdir},
+		{name: "Process", aliases: aliases.Process},
+		{name: "Name", aliases: aliases.Name},
+		{name: "Tag", aliases: aliases.Tag},
+		{name: "Status", aliases: aliases.Status},
+		{name: "Exit", aliases: aliases.Exit},
+		{name: "Duration", aliases: aliases.Duration},
+		{name: "Realtime", aliases: aliases.Realtime},
+		{name: "CPU", aliases: aliases.CPU},
+		{name: "Memory", aliases: aliases.Memory},
+		{name: "PeakRSS", aliases: aliases.PeakRSS},
+		{name: "PeakVMem", aliases: aliases.PeakVMem},
+	}
+
+	for _, group := range groups {
+		t.Run(group.name, func(t *testing.T) {
+			if len(group.aliases) == 0 {
+				t.Fatalf("%s aliases are empty", group.name)
+			}
+			seen := make(map[string]bool, len(group.aliases))
+			for _, alias := range group.aliases {
+				if strings.TrimSpace(alias) == "" {
+					t.Fatalf("%s aliases contain blank alias: %#v", group.name, group.aliases)
+				}
+				if seen[alias] {
+					t.Fatalf("%s aliases contain duplicate %q: %#v", group.name, alias, group.aliases)
+				}
+				seen[alias] = true
+			}
+		})
+	}
+}
+
+func TestDefaultColumnAliasSetReturnsIndependentSlices(t *testing.T) {
+	first := DefaultColumnAliasSet()
+	if len(first.TaskID) == 0 || len(first.Hash) == 0 {
+		t.Fatalf("default aliases must include task and hash aliases: %#v", first)
+	}
+	first.TaskID[0] = "mutated_task_id"
+	first.Hash[0] = "mutated_hash"
+
+	second := DefaultColumnAliasSet()
+	requireAlias(t, second.TaskID, "task_id")
+	requireAlias(t, second.Hash, "hash")
+	if second.TaskID[0] == "mutated_task_id" || second.Hash[0] == "mutated_hash" {
+		t.Fatalf("DefaultColumnAliasSet returned aliases sharing mutable backing storage: first=%#v second=%#v", first, second)
+	}
+}
+
+func requireAlias(t *testing.T, aliases []string, want string) {
+	t.Helper()
+
+	for _, alias := range aliases {
+		if alias == want {
+			return
+		}
+	}
+	t.Fatalf("aliases %#v do not include %q", aliases, want)
+}
+
+func TestNormalizeRecordColumnsMapsRootTraceAliasesAndCopiesRawColumns(t *testing.T) {
+	workdir := filepath.FromSlash("/runs/example/work/AB/C123DEF")
+	record := RawRecord{
+		RowOrder: 11,
+		Columns: map[string]string{
+			"hash":        "AB/C123DEF",
+			"workdir":     workdir,
+			"process":     "ALIGN_STAR",
+			"name":        "ALIGN_STAR (sample-1)",
+			"tag":         "sample-1",
+			"status":      "FAILED",
+			"exit":        "137",
+			"duration":    "1h 2m",
+			"realtime":    "62m",
+			"cpus":        "8",
+			"memory":      "16 GB",
+			"custom_note": "kept verbatim",
+		},
+	}
+
+	got, err := NormalizeRecordColumns(record, DefaultColumnAliasSet())
+	if err != nil {
+		t.Fatalf("NormalizeRecordColumns() returned error: %v", err)
+	}
+
+	want := NormalizedRecord{
+		RowOrder:   11,
+		Hash:       "AB/C123DEF",
+		Workdir:    workdir,
+		Process:    "ALIGN_STAR",
+		Name:       "ALIGN_STAR (sample-1)",
+		Tag:        "sample-1",
+		Status:     "FAILED",
+		Exit:       "137",
+		Duration:   "1h 2m",
+		Realtime:   "62m",
+		CPUDisplay: "8",
+		Memory:     "16 GB",
+		Columns:    record.Columns,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("NormalizeRecordColumns() = %#v, want %#v", got, want)
+	}
+
+	got.Columns["custom_note"] = "changed"
+	if record.Columns["custom_note"] != "kept verbatim" {
+		t.Fatalf("NormalizeRecordColumns() reused raw column map; record.Columns = %#v", record.Columns)
+	}
+}
+
+func TestNormalizeRecordColumnsMapsExecutionTraceAliases(t *testing.T) {
+	record := RawRecord{
+		RowOrder: 12,
+		Columns: map[string]string{
+			"task_id":   "42",
+			"hash":      "de/f456",
+			"native_id": "12345",
+			"name":      "NFGOS:AMBER_STEP:BAM_AMBER:AMBER (WG-26-03_vs_WG-26-04)",
+			"status":    "CACHED",
+			"exit":      "0",
+			"duration":  "3m",
+			"realtime":  "2m",
+			"%cpu":      "87.5%",
+			"peak_rss":  "4.5 GB",
+			"peak_vmem": "10 GB",
+			"rchar":     "1000",
+		},
+	}
+
+	got, err := NormalizeRecordColumns(record, DefaultColumnAliasSet())
+	if err != nil {
+		t.Fatalf("NormalizeRecordColumns() returned error: %v", err)
+	}
+
+	want := NormalizedRecord{
+		RowOrder:   12,
+		TaskID:     "42",
+		Hash:       "de/f456",
+		NativeID:   "12345",
+		Name:       "NFGOS:AMBER_STEP:BAM_AMBER:AMBER (WG-26-03_vs_WG-26-04)",
+		Status:     "CACHED",
+		Exit:       "0",
+		Duration:   "3m",
+		Realtime:   "2m",
+		CPUDisplay: "87.5%",
+		PeakRSS:    "4.5 GB",
+		PeakVMem:   "10 GB",
+		Columns:    record.Columns,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("NormalizeRecordColumns() = %#v, want %#v", got, want)
+	}
+}
+
+func TestNormalizeRecordColumnsSupportsCustomAliasesAndDefaultsMissingFields(t *testing.T) {
+	record := RawRecord{
+		RowOrder: 5,
+		Columns: map[string]string{
+			"task hash":     "12/345",
+			"state":         "COMPLETED",
+			"operator note": "manual review",
+		},
+	}
+	aliases := ColumnAliasSet{
+		Hash:   []string{"task hash"},
+		Status: []string{"state"},
+	}
+
+	got, err := NormalizeRecordColumns(record, aliases)
+	if err != nil {
+		t.Fatalf("NormalizeRecordColumns() returned error: %v", err)
+	}
+
+	want := NormalizedRecord{
+		RowOrder: 5,
+		Hash:     "12/345",
+		Status:   "COMPLETED",
+		Columns:  record.Columns,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("NormalizeRecordColumns() = %#v, want %#v", got, want)
+	}
+}
+
+func TestNormalizeRecordColumnsHandlesEmptyColumns(t *testing.T) {
+	got, err := NormalizeRecordColumns(RawRecord{RowOrder: 6, Columns: map[string]string{}}, DefaultColumnAliasSet())
+	if err != nil {
+		t.Fatalf("NormalizeRecordColumns() returned error: %v", err)
+	}
+
+	want := NormalizedRecord{RowOrder: 6, Columns: map[string]string{}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("NormalizeRecordColumns() = %#v, want %#v", got, want)
+	}
+}
+
+func TestNormalizeRecordColumnsRejectsAmbiguousAliases(t *testing.T) {
+	got, err := NormalizeRecordColumns(
+		RawRecord{RowOrder: 7, Columns: map[string]string{"id": "ab/c123def"}},
+		ColumnAliasSet{
+			TaskID: []string{"id"},
+			Hash:   []string{"id"},
+		},
+	)
+	if err == nil {
+		t.Fatalf("NormalizeRecordColumns() returned nil error and record %#v", got)
+	}
+	if !reflect.DeepEqual(got, NormalizedRecord{}) {
+		t.Fatalf("record on error = %#v, want zero value", got)
+	}
+	for _, want := range []string{"normalize record columns", "alias", "id"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
+		}
+	}
+}
+
+func TestDeriveNamePartsSplitsScopedProcessAndTag(t *testing.T) {
+	fullName := "NFGOS:AMBER_STEP:BAM_AMBER:AMBER (WG-26-03_vs_WG-26-04)"
+	process := "NFGOS:AMBER_STEP:BAM_AMBER:AMBER"
+	tag := "WG-26-03_vs_WG-26-04"
+
+	got := DeriveNameParts(fullName)
+	want := NameParts{
+		FullName:      fullName,
+		Process:       process,
+		Tag:           tag,
+		SelectorTerms: []string{fullName, process, tag},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DeriveNameParts() = %#v, want %#v", got, want)
+	}
+}
+
+func TestDeriveNamePartsTrimsFullNameAndKeepsSpacedTags(t *testing.T) {
+	got := DeriveNameParts("  ALIGN_STAR (tumor replicate 1)\n")
+	want := NameParts{
+		FullName:      "ALIGN_STAR (tumor replicate 1)",
+		Process:       "ALIGN_STAR",
+		Tag:           "tumor replicate 1",
+		SelectorTerms: []string{"ALIGN_STAR (tumor replicate 1)", "ALIGN_STAR", "tumor replicate 1"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DeriveNameParts() = %#v, want %#v", got, want)
+	}
+}
+
+func TestDeriveNamePartsDefaultsUntaggedNamesToProcessOnly(t *testing.T) {
+	got := DeriveNameParts("PIPE:QC")
+	want := NameParts{
+		FullName:      "PIPE:QC",
+		Process:       "PIPE:QC",
+		SelectorTerms: []string{"PIPE:QC"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DeriveNameParts() = %#v, want %#v", got, want)
+	}
+}
+
+func TestDeriveNamePartsLeavesAmbiguousParenthesesUnsplit(t *testing.T) {
+	tests := []string{
+		"PIPE:ALIGN (sample-1",
+		"PIPE:ALIGN (sample(1))",
+		"PIPE:ALIGN ()",
+		"PIPE:ALIGN(sample-1)",
+	}
+
+	for _, fullName := range tests {
+		t.Run(fullName, func(t *testing.T) {
+			got := DeriveNameParts(fullName)
+			want := NameParts{
+				FullName:      fullName,
+				Process:       fullName,
+				SelectorTerms: []string{fullName},
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("DeriveNameParts(%q) = %#v, want %#v", fullName, got, want)
+			}
+		})
+	}
+}
+
+func TestDeriveNamePartsReturnsEmptyPartsForBlankName(t *testing.T) {
+	got := DeriveNameParts(" \t\n ")
+	if got.FullName != "" || got.Process != "" || got.Tag != "" || len(got.SelectorTerms) != 0 {
+		t.Fatalf("DeriveNameParts(blank) = %#v, want empty name parts", got)
+	}
+}
+
+func TestTaskFromNormalizedRecordBuildsTaskFromExecutionTraceColumns(t *testing.T) {
+	runDir := t.TempDir()
+	wantWorkdir := filepath.Join(runDir, "work", "de", "f456")
+	if err := os.MkdirAll(wantWorkdir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", wantWorkdir, err)
+	}
+
+	fullName := "NFGOS:AMBER_STEP:BAM_AMBER:AMBER (WG-26-03_vs_WG-26-04)"
+	got, err := TaskFromNormalizedRecord(domain.RunDir{Path: runDir}, NormalizedRecord{
+		RowOrder:   12,
+		TaskID:     "42",
+		Hash:       "DE/F456",
+		NativeID:   "12345",
+		Name:       fullName,
+		Status:     " cached ",
+		Exit:       "0",
+		Duration:   "3m",
+		Realtime:   "2m",
+		CPUDisplay: "87.5%",
+		PeakRSS:    "4.5 GB",
+		PeakVMem:   "10 GB",
+	})
+	if err != nil {
+		t.Fatalf("TaskFromNormalizedRecord() returned error: %v", err)
+	}
+
+	wantExit := 0
+	want := domain.Task{
+		RowOrder: 12,
+		ID:       "de/f456",
+		Status:   domain.TaskStatusCached,
+		Process:  "NFGOS:AMBER_STEP:BAM_AMBER:AMBER",
+		Name:     fullName,
+		Tag:      "WG-26-03_vs_WG-26-04",
+		Workdir:  wantWorkdir,
+		Exit:     &wantExit,
+		Duration: "3m",
+		Realtime: "2m",
+		CPUs:     "87.5%",
+		Memory:   "peak_rss=4.5 GB; peak_vmem=10 GB",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("TaskFromNormalizedRecord() = %#v, want %#v", got, want)
+	}
+}
+
+func TestTaskFromNormalizedRecordPreservesExplicitDisplayFields(t *testing.T) {
+	workdir := filepath.Join(t.TempDir(), "custom-work-root", "AB", "C123DEF")
+	got, err := TaskFromNormalizedRecord(domain.RunDir{Path: t.TempDir()}, NormalizedRecord{
+		RowOrder:   7,
+		Hash:       "AB/C123DEF",
+		Workdir:    workdir,
+		Process:    "ALIGN_STAR",
+		Name:       "ALIGN_STAR (sample-1)",
+		Tag:        "sample-1",
+		Status:     " failed ",
+		Exit:       " 137 ",
+		Duration:   "1h 2m",
+		Realtime:   "62m",
+		CPUDisplay: "8",
+		Memory:     "16 GB",
+		PeakRSS:    "4.5 GB",
+		PeakVMem:   "10 GB",
+	})
+	if err != nil {
+		t.Fatalf("TaskFromNormalizedRecord() returned error: %v", err)
+	}
+
+	wantExit := 137
+	want := domain.Task{
+		RowOrder: 7,
+		ID:       "ab/c123def",
+		Status:   domain.TaskStatusFailed,
+		Process:  "ALIGN_STAR",
+		Name:     "ALIGN_STAR (sample-1)",
+		Tag:      "sample-1",
+		Workdir:  filepath.Clean(workdir),
+		Exit:     &wantExit,
+		Duration: "1h 2m",
+		Realtime: "62m",
+		CPUs:     "8",
+		Memory:   "16 GB",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("TaskFromNormalizedRecord() = %#v, want %#v", got, want)
+	}
+}
+
+func TestTaskFromNormalizedRecordUsesWorkdirWhenHashColumnIsMissing(t *testing.T) {
+	workdir := filepath.Join(t.TempDir(), "work", "DE", "F456")
+	got, err := TaskFromNormalizedRecord(domain.RunDir{Path: t.TempDir()}, NormalizedRecord{
+		RowOrder: 2,
+		Workdir:  workdir,
+		Status:   "COMPLETED",
+	})
+	if err != nil {
+		t.Fatalf("TaskFromNormalizedRecord() returned error: %v", err)
+	}
+	if got.ID != "de/f456" {
+		t.Fatalf("task ID = %q, want canonical ID from workdir", got.ID)
+	}
+	if got.Workdir != filepath.Clean(workdir) {
+		t.Fatalf("task workdir = %q, want %q", got.Workdir, filepath.Clean(workdir))
+	}
+	if got.Status != domain.TaskStatusCompleted {
+		t.Fatalf("task status = %q, want %q", got.Status, domain.TaskStatusCompleted)
+	}
+	if got.Exit != nil {
+		t.Fatalf("task exit = %#v, want nil for missing exit", got.Exit)
+	}
+}
+
+func TestTaskFromNormalizedRecordRejectsRecordsWithoutParseableHashOrWorkdir(t *testing.T) {
+	tests := []struct {
+		name   string
+		record NormalizedRecord
+	}{
+		{name: "missing id columns", record: NormalizedRecord{Status: "COMPLETED"}},
+		{name: "invalid id columns", record: NormalizedRecord{TaskID: "42", Hash: "not-a-hash", Workdir: "also-not-a-path"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.record.RowOrder = 9
+			got, err := TaskFromNormalizedRecord(domain.RunDir{Path: t.TempDir()}, tt.record)
+			if err == nil {
+				t.Fatalf("TaskFromNormalizedRecord() returned nil error and task %#v", got)
+			}
+			if !reflect.DeepEqual(got, domain.Task{}) {
+				t.Fatalf("task on error = %#v, want zero value", got)
+			}
+			for _, want := range []string{"task from normalized record", "row 9", "hash", "workdir"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}
+
+func TestTaskFromNormalizedRecordPropagatesInvalidExitValues(t *testing.T) {
+	got, err := TaskFromNormalizedRecord(domain.RunDir{Path: t.TempDir()}, NormalizedRecord{
+		RowOrder: 4,
+		Hash:     "ab/c123def",
+		Exit:     "killed",
+	})
+	if err == nil {
+		t.Fatalf("TaskFromNormalizedRecord() returned nil error and task %#v", got)
+	}
+	if !reflect.DeepEqual(got, domain.Task{}) {
+		t.Fatalf("task on error = %#v, want zero value", got)
+	}
+	for _, want := range []string{"task from normalized record", "row 4", "exit", "killed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
+		}
+	}
+}
+
 func TestNormalizeTaskStatusMapsKnownStatuses(t *testing.T) {
 	tests := []struct {
 		raw  string
@@ -532,6 +1043,56 @@ func TestNormalizeTraceRecordMapsCommonTraceColumns(t *testing.T) {
 		Realtime: "62m",
 		CPUs:     "8",
 		Memory:   "16 GB",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("NormalizeTraceRecord() = %#v, want %#v", got, want)
+	}
+}
+
+func TestNormalizeTraceRecordMapsNFCoreExecutionTraceAliases(t *testing.T) {
+	runDir := t.TempDir()
+	wantWorkdir := filepath.Join(runDir, "work", "de", "f456")
+	if err := os.MkdirAll(wantWorkdir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", wantWorkdir, err)
+	}
+
+	fullName := "NFGOS:AMBER_STEP:BAM_AMBER:AMBER (WG-26-03_vs_WG-26-04)"
+	record := RawRecord{
+		RowOrder: 12,
+		Columns: map[string]string{
+			"task_id":   "42",
+			"hash":      "DE/F456",
+			"native_id": "12345",
+			"name":      fullName,
+			"status":    " cached ",
+			"exit":      "0",
+			"duration":  "3m",
+			"realtime":  "2m",
+			"%cpu":      "87.5%",
+			"peak_rss":  "4.5 GB",
+			"peak_vmem": "10 GB",
+		},
+	}
+
+	got, err := NormalizeTraceRecord(domain.RunDir{Path: runDir}, record)
+	if err != nil {
+		t.Fatalf("NormalizeTraceRecord() returned error: %v", err)
+	}
+
+	wantExit := 0
+	want := domain.Task{
+		RowOrder: 12,
+		ID:       "de/f456",
+		Status:   domain.TaskStatusCached,
+		Process:  "NFGOS:AMBER_STEP:BAM_AMBER:AMBER",
+		Name:     fullName,
+		Tag:      "WG-26-03_vs_WG-26-04",
+		Workdir:  wantWorkdir,
+		Exit:     &wantExit,
+		Duration: "3m",
+		Realtime: "2m",
+		CPUs:     "87.5%",
+		Memory:   "peak_rss=4.5 GB; peak_vmem=10 GB",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("NormalizeTraceRecord() = %#v, want %#v", got, want)

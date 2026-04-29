@@ -366,6 +366,176 @@ func TestMatchHumanSelectorRejectsAbsentProcessNameTagSubstring(t *testing.T) {
 	}
 }
 
+func TestMatchLogOnlyEvidenceSelectorMatchesCanonicalHashAndFullWorkdir(t *testing.T) {
+	workdir := filepath.Join(t.TempDir(), "work", "ab", "c123def")
+	evidence := domain.LogOnlyTaskEvidence{
+		ID:      "ab/c123def",
+		Workdir: workdir,
+	}
+	selectorWorkdir := filepath.Join(filepath.Dir(workdir), ".", filepath.Base(workdir))
+
+	selectors := []string{
+		"  AB/C123DEF\t",
+		selectorWorkdir,
+	}
+
+	for _, selector := range selectors {
+		t.Run(selector, func(t *testing.T) {
+			if !MatchLogOnlyEvidenceSelector(selector, evidence) {
+				t.Fatalf("MatchLogOnlyEvidenceSelector(%q) = false, want true", selector)
+			}
+		})
+	}
+}
+
+func TestMatchLogOnlyEvidenceSelectorMatchesProcessNameAndDisplayLabel(t *testing.T) {
+	evidence := domain.LogOnlyTaskEvidence{
+		Process: "NFCORE_RNA:CALL_VARIANTS",
+		Name:    "tumor-02 replicate A",
+	}
+
+	selectors := []string{
+		"call_variants",
+		"TUMOR-02",
+		"nfcore_rna:call_variants (tumor-02 replicate a)",
+	}
+
+	for _, selector := range selectors {
+		t.Run(selector, func(t *testing.T) {
+			if !MatchLogOnlyEvidenceSelector(selector, evidence) {
+				t.Fatalf("MatchLogOnlyEvidenceSelector(%q) = false, want true", selector)
+			}
+		})
+	}
+}
+
+func TestMatchLogOnlyEvidenceSelectorRejectsEmptyPartialIdentityAndAbsentSelectors(t *testing.T) {
+	workdir := filepath.Join(t.TempDir(), "work", "ab", "c123def")
+	evidence := domain.LogOnlyTaskEvidence{
+		ID:      "ab/c123def",
+		Workdir: workdir,
+		Process: "ALIGN_STAR",
+		Name:    "control",
+	}
+
+	selectors := []string{
+		"",
+		" \t\n ",
+		"c123def",
+		filepath.Base(workdir),
+		filepath.Join(workdir, ".command.err"),
+		"variant",
+	}
+
+	for _, selector := range selectors {
+		t.Run(selector, func(t *testing.T) {
+			if MatchLogOnlyEvidenceSelector(selector, evidence) {
+				t.Fatalf("MatchLogOnlyEvidenceSelector(%q) = true, want false", selector)
+			}
+		})
+	}
+}
+
+func TestResolveLogOnlySelectorPrefersCanonicalIDBeforeEvidenceTextMatches(t *testing.T) {
+	evidenceList := []domain.LogOnlyTaskEvidence{
+		{ID: "aa/111111", Process: "ALIGN_STAR", Name: "tumor", Workdir: filepath.FromSlash("/runs/example/work/aa/111111")},
+		{ID: "bb/222222", Process: "qa aa/111111 review", Name: "control", Workdir: filepath.FromSlash("/runs/example/work/bb/222222")},
+	}
+
+	got, err := ResolveLogOnlySelector("  AA/111111\t", evidenceList)
+	if err != nil {
+		t.Fatalf("ResolveLogOnlySelector() returned error: %v", err)
+	}
+
+	assertExactLogOnlyResolution(t, got, "AA/111111", evidenceList[0], "matched canonical id")
+}
+
+func TestResolveLogOnlySelectorPrefersFullWorkdirBeforeEvidenceTextMatches(t *testing.T) {
+	root := t.TempDir()
+	workdir := filepath.Join(root, "work", "aa", "111111")
+	selector := filepath.Join(root, "work", "aa", ".", "111111")
+	evidenceList := []domain.LogOnlyTaskEvidence{
+		{ID: "aa/111111", Process: "ALIGN_STAR", Name: "tumor", Workdir: workdir},
+		{ID: "bb/222222", Process: "mentions " + selector, Name: "control", Workdir: filepath.Join(root, "work", "bb", "222222")},
+	}
+
+	got, err := ResolveLogOnlySelector(selector, evidenceList)
+	if err != nil {
+		t.Fatalf("ResolveLogOnlySelector() returned error: %v", err)
+	}
+
+	assertExactLogOnlyResolution(t, got, selector, evidenceList[0], "matched full workdir path")
+}
+
+func TestResolveLogOnlySelectorReturnsExactForSingleObservedEvidenceMatch(t *testing.T) {
+	evidenceList := []domain.LogOnlyTaskEvidence{
+		{ID: "aa/111111", Process: "ALIGN_STAR", Name: "control", Workdir: filepath.FromSlash("/runs/example/work/aa/111111")},
+		{ID: "bb/222222", Process: "CALL_VARIANTS", Name: "tumor", Workdir: filepath.FromSlash("/runs/example/work/bb/222222")},
+	}
+
+	got, err := ResolveLogOnlySelector("  TUMOR ", evidenceList)
+	if err != nil {
+		t.Fatalf("ResolveLogOnlySelector() returned error: %v", err)
+	}
+
+	assertExactLogOnlyResolution(t, got, "TUMOR", evidenceList[1], "matched log-only evidence")
+}
+
+func TestResolveLogOnlySelectorReturnsAmbiguousForMultipleObservedEvidenceMatches(t *testing.T) {
+	evidenceList := []domain.LogOnlyTaskEvidence{
+		{ID: "aa/111111", Process: "ALIGN_STAR", Name: "tumor", Workdir: filepath.FromSlash("/runs/example/work/aa/111111")},
+		{ID: "bb/222222", Process: "ALIGN_BWA", Name: "control", Workdir: filepath.FromSlash("/runs/example/work/bb/222222")},
+		{ID: "cc/333333", Process: "CALL_VARIANTS", Name: "tumor", Workdir: filepath.FromSlash("/runs/example/work/cc/333333")},
+	}
+
+	got, err := ResolveLogOnlySelector("align", evidenceList)
+	if err != nil {
+		t.Fatalf("ResolveLogOnlySelector() returned error: %v", err)
+	}
+
+	if got.Kind != domain.SelectorResolutionAmbiguous {
+		t.Fatalf("ResolveLogOnlySelector() kind = %q, want %q", got.Kind, domain.SelectorResolutionAmbiguous)
+	}
+	if got.Selector != "align" {
+		t.Fatalf("ResolveLogOnlySelector() selector = %q, want %q", got.Selector, "align")
+	}
+	if got.Evidence != nil {
+		t.Fatalf("ResolveLogOnlySelector() evidence = %#v, want nil for ambiguous selector", got.Evidence)
+	}
+	wantMatches := []domain.LogOnlyTaskEvidence{evidenceList[0], evidenceList[1]}
+	if !reflect.DeepEqual(got.Matches, wantMatches) {
+		t.Fatalf("ResolveLogOnlySelector() matches = %#v, want %#v", got.Matches, wantMatches)
+	}
+	assertResolutionDiagnostic(t, got.Diagnostics, domain.DiagnosticWarning, "selector_ambiguous", "selector matched more than one log-only evidence row")
+}
+
+func TestResolveLogOnlySelectorReturnsNotFoundForMissingOrBlankSelector(t *testing.T) {
+	evidenceList := []domain.LogOnlyTaskEvidence{{ID: "aa/111111", Process: "ALIGN_STAR", Name: "tumor", Workdir: filepath.FromSlash("/runs/example/work/aa/111111")}}
+
+	for _, selector := range []string{"missing", " \t\n "} {
+		t.Run(selector, func(t *testing.T) {
+			got, err := ResolveLogOnlySelector(selector, evidenceList)
+			if err != nil {
+				t.Fatalf("ResolveLogOnlySelector() returned error: %v", err)
+			}
+
+			if got.Kind != domain.SelectorResolutionNotFound {
+				t.Fatalf("ResolveLogOnlySelector() kind = %q, want %q", got.Kind, domain.SelectorResolutionNotFound)
+			}
+			if got.Selector != strings.TrimSpace(selector) {
+				t.Fatalf("ResolveLogOnlySelector() selector = %q, want %q", got.Selector, strings.TrimSpace(selector))
+			}
+			if got.Evidence != nil {
+				t.Fatalf("ResolveLogOnlySelector() evidence = %#v, want nil for not-found selector", got.Evidence)
+			}
+			if got.Matches == nil || len(got.Matches) != 0 {
+				t.Fatalf("ResolveLogOnlySelector() matches = %#v, want empty non-nil slice", got.Matches)
+			}
+			assertResolutionDiagnostic(t, got.Diagnostics, domain.DiagnosticError, "selector_not_found", "selector did not match any log-only evidence")
+		})
+	}
+}
+
 func TestResolveSelectorPrefersCanonicalIDBeforeHumanMatches(t *testing.T) {
 	taskList := []domain.Task{
 		{RowOrder: 1, ID: "aa/111111", Process: "ALIGN_STAR", Name: "tumor", Workdir: filepath.FromSlash("/runs/example/work/aa/111111")},
@@ -862,6 +1032,178 @@ func TestBuildTaskDossierRejectsUnknownResolutionKind(t *testing.T) {
 	assertEmptyDossierExceptDiagnostics(t, got, diagnostics)
 }
 
+func TestBuildLogOnlyTaskDossierCombinesExactEvidenceInventoryAndDiagnostics(t *testing.T) {
+	exitCode := 137
+	workdir := filepath.FromSlash("/runs/example/work/ab/c123def")
+	evidence := domain.LogOnlyTaskEvidence{
+		ID:             "ab/c123def",
+		Workdir:        workdir,
+		Process:        "ALIGN_STAR",
+		Name:           "tumor-sample",
+		ObservedStatus: domain.TaskStatusFailed,
+		Exit:           &exitCode,
+		ErrorSummary:   "process failed: command exited with 137",
+		ErrorBlock:     "Command failed with exit status 137",
+		Sources: []domain.LogOnlyEvidenceSource{
+			{Kind: domain.LogOnlyEvidenceSourceLog, Path: filepath.FromSlash("/runs/example/.nextflow.log"), Detail: "failure block"},
+			{Kind: domain.LogOnlyEvidenceSourceCommand, Path: filepath.Join(workdir, string(domain.CommandFileErr)), Detail: "stderr snippet"},
+		},
+		Completeness:          domain.LogOnlyEvidencePartial,
+		CommandFilesAvailable: true,
+	}
+	inventory := domain.CommandFileInventory{
+		Workdir: workdir,
+		Files: []domain.CommandFile{
+			{
+				Kind:   domain.CommandFileErr,
+				Path:   filepath.Join(workdir, string(domain.CommandFileErr)),
+				Exists: true,
+				Size:   512,
+				Snippet: &domain.Snippet{
+					Path:      filepath.Join(workdir, string(domain.CommandFileErr)),
+					Strategy:  domain.SnippetStrategyError,
+					StartLine: 4,
+					EndLine:   6,
+					Content:   "before\nERROR failed\nafter",
+					MaxBytes:  4096,
+				},
+			},
+		},
+	}
+	diagnostics := []domain.Diagnostic{
+		{Severity: domain.DiagnosticInfo, Code: "selector_exact", Message: "selector resolved exactly", Detail: "matched log-only evidence"},
+	}
+	resolution := domain.LogOnlySelectorResolution{
+		Kind:        domain.SelectorResolutionExact,
+		Selector:    evidence.ID,
+		Evidence:    &evidence,
+		Diagnostics: diagnostics,
+	}
+
+	got, err := BuildLogOnlyTaskDossier(resolution, inventory)
+	if err != nil {
+		t.Fatalf("BuildLogOnlyTaskDossier() error = %v, want nil", err)
+	}
+
+	want := domain.LogOnlyTaskDossier{Evidence: evidence, Inventory: inventory, Diagnostics: diagnostics}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("BuildLogOnlyTaskDossier() = %#v, want %#v", got, want)
+	}
+}
+
+func TestBuildLogOnlyTaskDossierAllowsExactEvidenceWithoutInventory(t *testing.T) {
+	evidence := domain.LogOnlyTaskEvidence{
+		Process:        "NFCORE_RNA:NO_WORKDIR",
+		Name:           "sample-with-log-only-error",
+		ObservedStatus: domain.TaskStatusFailed,
+		ErrorSummary:   "process failed before workdir was observed",
+		ErrorBlock:     "No workdir line was parseable in the selected log",
+		Sources: []domain.LogOnlyEvidenceSource{
+			{Kind: domain.LogOnlyEvidenceSourceLog, Path: filepath.FromSlash("/runs/example/.nextflow.log"), Detail: "failure block"},
+		},
+		Completeness: domain.LogOnlyEvidencePartial,
+	}
+	resolution := domain.LogOnlySelectorResolution{
+		Kind:     domain.SelectorResolutionExact,
+		Selector: "NO_WORKDIR",
+		Evidence: &evidence,
+	}
+
+	got, err := BuildLogOnlyTaskDossier(resolution, domain.CommandFileInventory{})
+	if err != nil {
+		t.Fatalf("BuildLogOnlyTaskDossier() error = %v, want nil", err)
+	}
+
+	want := domain.LogOnlyTaskDossier{Evidence: evidence, Inventory: domain.CommandFileInventory{}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("BuildLogOnlyTaskDossier() = %#v, want %#v", got, want)
+	}
+}
+
+func TestBuildLogOnlyTaskDossierRejectsExactResolutionWithoutEvidence(t *testing.T) {
+	diagnostics := []domain.Diagnostic{
+		{Severity: domain.DiagnosticError, Code: "selector_exact_missing_evidence", Message: "exact selector did not include log-only evidence"},
+	}
+
+	got, err := BuildLogOnlyTaskDossier(domain.LogOnlySelectorResolution{
+		Kind:        domain.SelectorResolutionExact,
+		Selector:    "ab/c123def",
+		Diagnostics: diagnostics,
+	}, domain.CommandFileInventory{Workdir: filepath.FromSlash("/runs/example/work/ab/c123def")})
+	if err == nil {
+		t.Fatalf("BuildLogOnlyTaskDossier() error = nil, want error for exact resolution without evidence")
+	}
+	assertErrorContains(t, err, "exact")
+	assertErrorContains(t, err, "evidence")
+	assertEmptyLogOnlyDossierExceptDiagnostics(t, got, diagnostics)
+}
+
+func TestBuildLogOnlyTaskDossierRejectsAmbiguousResolutionWithoutGuessing(t *testing.T) {
+	diagnostics := []domain.Diagnostic{
+		{Severity: domain.DiagnosticWarning, Code: "selector_ambiguous", Message: "selector matched more than one log-only evidence row"},
+	}
+	resolution := domain.LogOnlySelectorResolution{
+		Kind:     domain.SelectorResolutionAmbiguous,
+		Selector: "ALIGN",
+		Matches: []domain.LogOnlyTaskEvidence{
+			{ID: "aa/111111", Process: "ALIGN_STAR", Workdir: filepath.FromSlash("/runs/example/work/aa/111111")},
+			{ID: "bb/222222", Process: "ALIGN_STAR", Workdir: filepath.FromSlash("/runs/example/work/bb/222222")},
+		},
+		Diagnostics: diagnostics,
+	}
+	inventory := domain.CommandFileInventory{
+		Workdir: filepath.FromSlash("/runs/example/work/aa/111111"),
+		Files:   []domain.CommandFile{{Kind: domain.CommandFileLog, Exists: true}},
+	}
+
+	got, err := BuildLogOnlyTaskDossier(resolution, inventory)
+	if err == nil {
+		t.Fatalf("BuildLogOnlyTaskDossier() error = nil, want error for ambiguous selector")
+	}
+	assertErrorContains(t, err, "ambiguous")
+	assertErrorContains(t, err, "ALIGN")
+	assertErrorContains(t, err, "2")
+	assertEmptyLogOnlyDossierExceptDiagnostics(t, got, diagnostics)
+}
+
+func TestBuildLogOnlyTaskDossierRejectsNotFoundResolution(t *testing.T) {
+	diagnostics := []domain.Diagnostic{
+		{Severity: domain.DiagnosticError, Code: "selector_not_found", Message: "selector did not match any log-only evidence"},
+	}
+	resolution := domain.LogOnlySelectorResolution{
+		Kind:        domain.SelectorResolutionNotFound,
+		Selector:    "missing-task",
+		Diagnostics: diagnostics,
+	}
+
+	got, err := BuildLogOnlyTaskDossier(resolution, domain.CommandFileInventory{Workdir: filepath.FromSlash("/runs/example/work/cc/333333")})
+	if err == nil {
+		t.Fatalf("BuildLogOnlyTaskDossier() error = nil, want error for not-found selector")
+	}
+	assertErrorContains(t, err, "not found")
+	assertErrorContains(t, err, "missing-task")
+	assertEmptyLogOnlyDossierExceptDiagnostics(t, got, diagnostics)
+}
+
+func TestBuildLogOnlyTaskDossierRejectsUnknownResolutionKind(t *testing.T) {
+	diagnostics := []domain.Diagnostic{
+		{Severity: domain.DiagnosticError, Code: "selector_unknown_kind", Message: "selector resolution kind was not recognized"},
+	}
+	resolution := domain.LogOnlySelectorResolution{
+		Kind:        domain.SelectorResolutionKind("maybe"),
+		Selector:    "ab/c123def",
+		Diagnostics: diagnostics,
+	}
+
+	got, err := BuildLogOnlyTaskDossier(resolution, domain.CommandFileInventory{})
+	if err == nil {
+		t.Fatalf("BuildLogOnlyTaskDossier() error = nil, want error for unknown selector resolution kind")
+	}
+	assertErrorContains(t, err, "unsupported")
+	assertErrorContains(t, err, "maybe")
+	assertEmptyLogOnlyDossierExceptDiagnostics(t, got, diagnostics)
+}
+
 func assertExactResolution(t *testing.T, got domain.SelectorResolution, wantSelector string, wantTask domain.Task, wantDetail string) {
 	t.Helper()
 	if got.Kind != domain.SelectorResolutionExact {
@@ -882,6 +1224,29 @@ func assertExactResolution(t *testing.T, got domain.SelectorResolution, wantSele
 	assertResolutionDiagnostic(t, got.Diagnostics, domain.DiagnosticInfo, "selector_exact", "selector resolved exactly")
 	if got.Diagnostics[0].Detail != wantDetail {
 		t.Fatalf("ResolveSelector() diagnostic detail = %q, want %q", got.Diagnostics[0].Detail, wantDetail)
+	}
+}
+
+func assertExactLogOnlyResolution(t *testing.T, got domain.LogOnlySelectorResolution, wantSelector string, wantEvidence domain.LogOnlyTaskEvidence, wantDetail string) {
+	t.Helper()
+	if got.Kind != domain.SelectorResolutionExact {
+		t.Fatalf("ResolveLogOnlySelector() kind = %q, want %q", got.Kind, domain.SelectorResolutionExact)
+	}
+	if got.Selector != wantSelector {
+		t.Fatalf("ResolveLogOnlySelector() selector = %q, want %q", got.Selector, wantSelector)
+	}
+	if got.Evidence == nil {
+		t.Fatalf("ResolveLogOnlySelector() evidence = nil, want %#v", wantEvidence)
+	}
+	if !reflect.DeepEqual(*got.Evidence, wantEvidence) {
+		t.Fatalf("ResolveLogOnlySelector() evidence = %#v, want %#v", *got.Evidence, wantEvidence)
+	}
+	if got.Matches == nil || len(got.Matches) != 0 {
+		t.Fatalf("ResolveLogOnlySelector() matches = %#v, want empty non-nil slice", got.Matches)
+	}
+	assertResolutionDiagnostic(t, got.Diagnostics, domain.DiagnosticInfo, "selector_exact", "selector resolved exactly")
+	if got.Diagnostics[0].Detail != wantDetail {
+		t.Fatalf("ResolveLogOnlySelector() diagnostic detail = %q, want %q", got.Diagnostics[0].Detail, wantDetail)
 	}
 }
 
@@ -916,5 +1281,18 @@ func assertEmptyDossierExceptDiagnostics(t *testing.T, got domain.TaskDossier, w
 	}
 	if !reflect.DeepEqual(got.Diagnostics, wantDiagnostics) {
 		t.Fatalf("dossier diagnostics = %#v, want %#v", got.Diagnostics, wantDiagnostics)
+	}
+}
+
+func assertEmptyLogOnlyDossierExceptDiagnostics(t *testing.T, got domain.LogOnlyTaskDossier, wantDiagnostics []domain.Diagnostic) {
+	t.Helper()
+	if !reflect.DeepEqual(got.Evidence, domain.LogOnlyTaskEvidence{}) {
+		t.Fatalf("log-only dossier evidence = %#v, want zero evidence", got.Evidence)
+	}
+	if !reflect.DeepEqual(got.Inventory, domain.CommandFileInventory{}) {
+		t.Fatalf("log-only dossier inventory = %#v, want zero inventory", got.Inventory)
+	}
+	if !reflect.DeepEqual(got.Diagnostics, wantDiagnostics) {
+		t.Fatalf("log-only dossier diagnostics = %#v, want %#v", got.Diagnostics, wantDiagnostics)
 	}
 }

@@ -175,6 +175,658 @@ func TestParseLogOnlyFailuresRejectsInvalidInputs(t *testing.T) {
 	})
 }
 
+func TestParseLogOnlyTaskEvidenceCombinesLifecycleFailureAndWorkdirEvidence(t *testing.T) {
+	runPath := t.TempDir()
+	failedWorkdir := filepath.Join(runPath, "work", "ab", "c123def")
+	if err := os.MkdirAll(failedWorkdir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) returned error: %v", failedWorkdir, err)
+	}
+	if err := os.WriteFile(filepath.Join(failedWorkdir, ".exitcode"), []byte("137\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(.exitcode) returned error: %v", err)
+	}
+	commandErr := "stderr evidence from referenced workdir"
+	if err := os.WriteFile(filepath.Join(failedWorkdir, string(domain.CommandFileErr)), []byte(commandErr), 0o644); err != nil {
+		t.Fatalf("WriteFile(.command.err) returned error: %v", err)
+	}
+
+	logPath := filepath.Join(runPath, ".nextflow.log")
+	content := strings.Join([]string{
+		"Apr-28 12:00:00.000 [Task submitter] INFO nextflow.Session - [AB/C123DEF] Submitted process > PIPE:ALIGN (sample-01)",
+		"Apr-28 12:00:30.000 [Task monitor] DEBUG nextflow.processor.TaskPollingMonitor - [CD/EF456] Completed process > PIPE:QC (sample-02)",
+		"Apr-28 12:01:00.000 [Task monitor] ERROR nextflow.processor.TaskProcessor - Error executing process > 'PIPE:ALIGN (sample-01)'",
+		"",
+		"Command exit status:",
+		"  137",
+		"",
+		"Command error:",
+		"  killed by scheduler",
+		"",
+		"Work dir:",
+		"  AB/C123DEF",
+		"",
+	}, "\n")
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) returned error: %v", logPath, err)
+	}
+
+	got, err := ParseLogOnlyTaskEvidence(context.Background(), domain.RunDir{Path: runPath}, domain.SourceFingerprint{Kind: domain.SourceKindLog, Path: logPath})
+	if err != nil {
+		t.Fatalf("ParseLogOnlyTaskEvidence returned error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ParseLogOnlyTaskEvidence returned %d rows, want combined failed row plus completed row: %#v", len(got), got)
+	}
+
+	failed := got[0]
+	if failed.ID != "ab/c123def" || failed.Workdir != filepath.Clean(failedWorkdir) {
+		t.Fatalf("failed ID/Workdir = %q/%q, want ab/c123def/%q", failed.ID, failed.Workdir, filepath.Clean(failedWorkdir))
+	}
+	if failed.Process != "PIPE:ALIGN" || failed.Name != "sample-01" || failed.ObservedStatus != domain.TaskStatusFailed {
+		t.Fatalf("failed Process/Name/Status = %q/%q/%q, want PIPE:ALIGN/sample-01/FAILED", failed.Process, failed.Name, failed.ObservedStatus)
+	}
+	if failed.Exit == nil || *failed.Exit != 137 {
+		if failed.Exit == nil {
+			t.Fatalf("failed Exit = nil, want 137")
+		}
+		t.Fatalf("failed Exit = %d, want 137", *failed.Exit)
+	}
+	if failed.ErrorSummary != "killed by scheduler" || !strings.Contains(failed.ErrorBlock, "Error executing process > 'PIPE:ALIGN (sample-01)'") {
+		t.Fatalf("failed error fields = summary %q block %q, want final failure-block evidence preserved", failed.ErrorSummary, failed.ErrorBlock)
+	}
+	if !failed.CommandFilesAvailable || failed.Completeness != domain.LogOnlyEvidencePartial {
+		t.Fatalf("failed command availability/completeness = %v/%q, want true/partial after workdir enrichment", failed.CommandFilesAvailable, failed.Completeness)
+	}
+	for _, want := range []domain.LogOnlyEvidenceSourceKind{domain.LogOnlyEvidenceSourceLog, domain.LogOnlyEvidenceSourceWorkdir, domain.LogOnlyEvidenceSourceCommand} {
+		found := false
+		for _, source := range failed.Sources {
+			if source.Kind == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("failed Sources = %#v, want source kind %q", failed.Sources, want)
+		}
+	}
+
+	completed := got[1]
+	if completed.ID != "cd/ef456" || completed.Process != "PIPE:QC" || completed.Name != "sample-02" || completed.ObservedStatus != domain.TaskStatusCompleted {
+		t.Fatalf("completed evidence = %#v, want lifecycle-only completed PIPE:QC sample-02", completed)
+	}
+	if completed.Workdir != "" || completed.Exit != nil || completed.CommandFilesAvailable || completed.ErrorSummary != "" {
+		t.Fatalf("completed evidence = %#v, want no fabricated workdir/exit/error details", completed)
+	}
+}
+
+func TestParseLogOnlyTaskEvidenceEnrichesLifecycleHashWorkdir(t *testing.T) {
+	runPath := t.TempDir()
+	workdir := filepath.Join(runPath, "work", "aa", "111111")
+	if err := os.MkdirAll(workdir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) returned error: %v", workdir, err)
+	}
+	if err := os.WriteFile(filepath.Join(workdir, ".exitcode"), []byte("2\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(.exitcode) returned error: %v", err)
+	}
+	commandErr := "fatal error from lifecycle-only workdir"
+	if err := os.WriteFile(filepath.Join(workdir, string(domain.CommandFileErr)), []byte(commandErr), 0o644); err != nil {
+		t.Fatalf("WriteFile(.command.err) returned error: %v", err)
+	}
+	unreferencedWorkdir := filepath.Join(runPath, "work", "bb", "222222")
+	if err := os.MkdirAll(unreferencedWorkdir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) returned error: %v", unreferencedWorkdir, err)
+	}
+	if err := os.WriteFile(filepath.Join(unreferencedWorkdir, ".exitcode"), []byte("99\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(unreferenced .exitcode) returned error: %v", err)
+	}
+
+	logPath := filepath.Join(runPath, ".nextflow.log")
+	content := strings.Join([]string{
+		"Apr-28 12:00:00.000 [Task submitter] INFO nextflow.Session - [AA/111111] Submitted process > PIPE:ONLY (sample-a)",
+		"Apr-28 12:00:30.000 [Task monitor] ERROR nextflow.processor.TaskPollingMonitor - [aa/111111] Failed process > PIPE:ONLY (sample-a)",
+		"",
+	}, "\n")
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) returned error: %v", logPath, err)
+	}
+
+	got, err := ParseLogOnlyTaskEvidence(context.Background(), domain.RunDir{Path: runPath}, domain.SourceFingerprint{Kind: domain.SourceKindLog, Path: logPath})
+	if err != nil {
+		t.Fatalf("ParseLogOnlyTaskEvidence returned error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ParseLogOnlyTaskEvidence returned %d rows, want one lifecycle evidence row: %#v", len(got), got)
+	}
+
+	evidence := got[0]
+	if evidence.ID != "aa/111111" || evidence.Workdir != filepath.Clean(workdir) {
+		t.Fatalf("ID/Workdir = %q/%q, want aa/111111/%q", evidence.ID, evidence.Workdir, filepath.Clean(workdir))
+	}
+	if evidence.ObservedStatus != domain.TaskStatusFailed || evidence.Process != "PIPE:ONLY" || evidence.Name != "sample-a" {
+		t.Fatalf("status/process/name = %q/%q/%q, want FAILED/PIPE:ONLY/sample-a", evidence.ObservedStatus, evidence.Process, evidence.Name)
+	}
+	if evidence.Exit == nil || *evidence.Exit != 2 {
+		if evidence.Exit == nil {
+			t.Fatalf("Exit = nil, want 2 from referenced .exitcode")
+		}
+		t.Fatalf("Exit = %d, want 2 from referenced .exitcode", *evidence.Exit)
+	}
+	if evidence.ErrorBlock != commandErr || evidence.ErrorSummary != commandErr {
+		t.Fatalf("ErrorBlock/ErrorSummary = %q/%q, want bounded command error %q", evidence.ErrorBlock, evidence.ErrorSummary, commandErr)
+	}
+	if !evidence.CommandFilesAvailable {
+		t.Fatalf("CommandFilesAvailable = false, want true for referenced workdir command evidence")
+	}
+	for _, source := range evidence.Sources {
+		if source.Path == filepath.Join(unreferencedWorkdir, ".exitcode") {
+			t.Fatalf("Sources = %#v, should not include unreferenced workdir evidence", evidence.Sources)
+		}
+	}
+}
+
+func TestParseLogOnlyTaskEvidenceKeepsFinalFailureOnlyEvidence(t *testing.T) {
+	runPath := t.TempDir()
+	logPath := filepath.Join(runPath, ".nextflow.log")
+	content := strings.Join([]string{
+		"Apr-28 12:00:00.000 [main] INFO nextflow.Session - Session start",
+		"ERROR ~ Error executing process > 'PIPE:QC'",
+		"",
+		"Command error:",
+		"  task failed before workdir was reported",
+		"",
+	}, "\n")
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) returned error: %v", logPath, err)
+	}
+
+	got, err := ParseLogOnlyTaskEvidence(context.Background(), domain.RunDir{Path: runPath}, domain.SourceFingerprint{Kind: domain.SourceKindLog, Path: logPath})
+	if err != nil {
+		t.Fatalf("ParseLogOnlyTaskEvidence returned error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ParseLogOnlyTaskEvidence returned %d rows, want one partial final-failure row: %#v", len(got), got)
+	}
+	if got[0].ID != "" || got[0].Workdir != "" || got[0].Exit != nil {
+		t.Fatalf("ID/Workdir/Exit = %q/%q/%#v, want missing fields preserved for partial final-failure evidence", got[0].ID, got[0].Workdir, got[0].Exit)
+	}
+	if got[0].Process != "PIPE:QC" || got[0].Name != "" || got[0].ObservedStatus != domain.TaskStatusFailed {
+		t.Fatalf("Process/Name/Status = %q/%q/%q, want PIPE:QC/empty/FAILED", got[0].Process, got[0].Name, got[0].ObservedStatus)
+	}
+	if got[0].ErrorSummary != "task failed before workdir was reported" {
+		t.Fatalf("ErrorSummary = %q, want deterministic command error summary", got[0].ErrorSummary)
+	}
+}
+
+func TestParseLogOnlyTaskEvidenceReturnsEmptySliceWhenNoEvidenceAppears(t *testing.T) {
+	runPath := t.TempDir()
+	logPath := filepath.Join(runPath, ".nextflow.log")
+	content := strings.Join([]string{
+		"Apr-28 12:00:00.000 [main] INFO nextflow.Session - Session start",
+		"Apr-28 12:02:00.000 [main] ERROR nextflow.Session - Pipeline aborted before task evidence was reported",
+		"",
+	}, "\n")
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) returned error: %v", logPath, err)
+	}
+
+	got, err := ParseLogOnlyTaskEvidence(context.Background(), domain.RunDir{Path: runPath}, domain.SourceFingerprint{Kind: domain.SourceKindLog, Path: logPath})
+	if err != nil {
+		t.Fatalf("ParseLogOnlyTaskEvidence returned error: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("ParseLogOnlyTaskEvidence returned nil, want empty slice for no observed evidence")
+	}
+	if len(got) != 0 {
+		t.Fatalf("ParseLogOnlyTaskEvidence returned %#v, want no evidence", got)
+	}
+}
+
+func TestParseLogOnlyTaskEvidenceRejectsInvalidInputs(t *testing.T) {
+	runPath := t.TempDir()
+	logPath := filepath.Join(runPath, ".nextflow.log")
+	if err := os.WriteFile(logPath, []byte("[ab/c123def] Failed process > PIPE:QC\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) returned error: %v", logPath, err)
+	}
+
+	t.Run("nil context", func(t *testing.T) {
+		got, err := ParseLogOnlyTaskEvidence(nil, domain.RunDir{Path: runPath}, domain.SourceFingerprint{Kind: domain.SourceKindLog, Path: logPath})
+		if err == nil {
+			t.Fatalf("ParseLogOnlyTaskEvidence(nil context) returned nil error and evidence %#v", got)
+		}
+		if got != nil {
+			t.Fatalf("evidence on error = %#v, want nil", got)
+		}
+		if !strings.Contains(err.Error(), "nil context") {
+			t.Fatalf("error = %q, want it to mention nil context", err.Error())
+		}
+	})
+
+	t.Run("canceled context", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		got, err := ParseLogOnlyTaskEvidence(ctx, domain.RunDir{Path: runPath}, domain.SourceFingerprint{Kind: domain.SourceKindLog, Path: logPath})
+		if err == nil {
+			t.Fatalf("ParseLogOnlyTaskEvidence(canceled context) returned nil error and evidence %#v", got)
+		}
+		if got != nil {
+			t.Fatalf("evidence on error = %#v, want nil", got)
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want context.Canceled", err)
+		}
+	})
+
+	t.Run("wrong source kind", func(t *testing.T) {
+		got, err := ParseLogOnlyTaskEvidence(context.Background(), domain.RunDir{Path: runPath}, domain.SourceFingerprint{Kind: domain.SourceKindTrace, Path: logPath})
+		if err == nil {
+			t.Fatalf("ParseLogOnlyTaskEvidence(wrong source kind) returned nil error and evidence %#v", got)
+		}
+		if got != nil {
+			t.Fatalf("evidence on error = %#v, want nil", got)
+		}
+		for _, want := range []string{"parse log-only task evidence", "log source", string(domain.SourceKindTrace), string(domain.SourceKindLog)} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
+			}
+		}
+	})
+
+	t.Run("missing selected log", func(t *testing.T) {
+		missingPath := filepath.Join(runPath, "missing.nextflow.log")
+		got, err := ParseLogOnlyTaskEvidence(context.Background(), domain.RunDir{Path: runPath}, domain.SourceFingerprint{Kind: domain.SourceKindLog, Path: missingPath})
+		if err == nil {
+			t.Fatalf("ParseLogOnlyTaskEvidence(missing selected log) returned nil error and evidence %#v", got)
+		}
+		if got != nil {
+			t.Fatalf("evidence on error = %#v, want nil", got)
+		}
+		for _, want := range []string{"parse log-only task evidence", "open source", missingPath} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
+			}
+		}
+	})
+}
+
+func TestExtractLifecycleEvidenceParsesHashPrefixedLifecycleLines(t *testing.T) {
+	input := strings.Join([]string{
+		"Apr-28 12:00:00.000 [Task submitter] INFO nextflow.Session - [AB/C123DEF] Submitted process > PIPE:ALIGN (sample-01)",
+		"Apr-28 12:01:00.000 [Task monitor] DEBUG nextflow.processor.TaskPollingMonitor - [ab/c123def] Completed process > PIPE:ALIGN (sample-01)",
+		"Apr-28 12:02:00.000 [Task submitter] INFO nextflow.Session - [DE/F456] Cached process > PIPE:CACHE (sample-cached)",
+		"Apr-28 12:03:00.000 [Task monitor] ERROR nextflow.processor.TaskPollingMonitor - [12/ABCDEF] Failed process > PIPE:QUANT (tumor-02)",
+		"Apr-28 12:04:00.000 [Task submitter] INFO nextflow.Session - [34/BBBBBB] Submitted process > PIPE:WAITING",
+		"Apr-28 12:05:00.000 [main] ERROR nextflow.Session - Pipeline aborted after task failure",
+		"",
+	}, "\n")
+
+	got, err := ExtractLifecycleEvidence(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("ExtractLifecycleEvidence returned error: %v", err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("ExtractLifecycleEvidence returned %d evidence rows, want 4: %#v", len(got), got)
+	}
+
+	first := got[0]
+	if first.ID != "ab/c123def" || first.Process != "PIPE:ALIGN" || first.Name != "sample-01" || first.ObservedStatus != domain.TaskStatusCompleted {
+		t.Fatalf("first evidence = %#v, want completed PIPE:ALIGN sample evidence with canonical id ab/c123def", first)
+	}
+	if first.Workdir != "" || first.Exit != nil || first.ErrorSummary != "" || first.ErrorBlock != "" {
+		t.Fatalf("first evidence has fabricated fields: %#v, want no workdir/exit/error details from lifecycle lines", first)
+	}
+	if first.Completeness != domain.LogOnlyEvidencePartial || first.CommandFilesAvailable {
+		t.Fatalf("first completeness/command availability = %q/%v, want partial/false", first.Completeness, first.CommandFilesAvailable)
+	}
+	if len(first.Sources) != 2 {
+		t.Fatalf("first Sources = %#v, want submitted and completed log source markers", first.Sources)
+	}
+	for _, source := range first.Sources {
+		if source.Kind != domain.LogOnlyEvidenceSourceLog {
+			t.Fatalf("first source kind = %q, want log source marker", source.Kind)
+		}
+	}
+
+	second := got[1]
+	if second.ID != "de/f456" || second.Process != "PIPE:CACHE" || second.Name != "sample-cached" || second.ObservedStatus != domain.TaskStatusCached {
+		t.Fatalf("second evidence = %#v, want cached PIPE:CACHE sample evidence", second)
+	}
+
+	third := got[2]
+	if third.ID != "12/abcdef" || third.Process != "PIPE:QUANT" || third.Name != "tumor-02" || third.ObservedStatus != domain.TaskStatusFailed {
+		t.Fatalf("third evidence = %#v, want failed PIPE:QUANT tumor evidence", third)
+	}
+
+	fourth := got[3]
+	if fourth.ID != "34/bbbbbb" || fourth.Process != "PIPE:WAITING" || fourth.Name != "" || fourth.ObservedStatus != domain.TaskStatusSubmitted {
+		t.Fatalf("fourth evidence = %#v, want submitted untagged PIPE:WAITING evidence", fourth)
+	}
+}
+
+func TestExtractLifecycleEvidenceReturnsEmptySliceWhenNoLifecycleEvidenceAppears(t *testing.T) {
+	inputs := []string{
+		"",
+		"   \r\n\t\r\n",
+		strings.Join([]string{
+			"Apr-28 12:00:00.000 [main] INFO nextflow.Session - Session start",
+			"ERROR ~ Error executing process > 'PIPE:QC'",
+			"[not/a-hash] Submitted process > PIPE:BOGUS",
+			"[ab/c123def] process > PIPE:PROGRESS [100%] 1 of 1",
+		}, "\n"),
+	}
+
+	for _, input := range inputs {
+		t.Run(input, func(t *testing.T) {
+			got, err := ExtractLifecycleEvidence(strings.NewReader(input))
+			if err != nil {
+				t.Fatalf("ExtractLifecycleEvidence(%q) returned error: %v", input, err)
+			}
+			if got == nil {
+				t.Fatalf("ExtractLifecycleEvidence(%q) returned nil, want empty slice", input)
+			}
+			if len(got) != 0 {
+				t.Fatalf("ExtractLifecycleEvidence(%q) returned %#v, want no lifecycle evidence", input, got)
+			}
+		})
+	}
+}
+
+func TestExtractLifecycleEvidenceRejectsNilReader(t *testing.T) {
+	got, err := ExtractLifecycleEvidence(nil)
+	if err == nil {
+		t.Fatalf("ExtractLifecycleEvidence(nil) returned nil error and evidence %#v", got)
+	}
+	if got != nil {
+		t.Fatalf("evidence on error = %#v, want nil", got)
+	}
+	if !strings.Contains(err.Error(), "nil reader") {
+		t.Fatalf("error = %q, want it to mention nil reader", err.Error())
+	}
+}
+
+func TestLogOnlyEvidenceFromFailurePreservesFailureFieldsAndMarksLogSource(t *testing.T) {
+	exit := 137
+	failure := domain.LogOnlyFailure{
+		ID:           "ab/c123def",
+		Workdir:      "/runs/example/work/ab/c123def",
+		Process:      "PIPE:ALIGN",
+		Name:         "sample-01",
+		Exit:         &exit,
+		ErrorSummary: "killed by scheduler",
+		ErrorBlock:   "ERROR ~ Error executing process > 'PIPE:ALIGN (sample-01)'",
+	}
+	source := domain.SourceFingerprint{Kind: domain.SourceKindLog, Path: "/runs/example/.nextflow.log"}
+
+	got := LogOnlyEvidenceFromFailure(failure, source)
+
+	if got.ID != failure.ID || got.Workdir != failure.Workdir || got.Process != failure.Process || got.Name != failure.Name {
+		t.Fatalf("identity fields = ID %q Workdir %q Process %q Name %q, want failure fields %#v", got.ID, got.Workdir, got.Process, got.Name, failure)
+	}
+	if got.ObservedStatus != domain.TaskStatusFailed {
+		t.Fatalf("ObservedStatus = %q, want %q for failure-block evidence", got.ObservedStatus, domain.TaskStatusFailed)
+	}
+	if got.Exit == nil || *got.Exit != exit {
+		if got.Exit == nil {
+			t.Fatalf("Exit = nil, want %d", exit)
+		}
+		t.Fatalf("Exit = %d, want %d", *got.Exit, exit)
+	}
+	if got.ErrorSummary != failure.ErrorSummary || got.ErrorBlock != failure.ErrorBlock {
+		t.Fatalf("error fields = Summary %q Block %q, want failure summary/block", got.ErrorSummary, got.ErrorBlock)
+	}
+	if got.Completeness != domain.LogOnlyEvidencePartial || got.CommandFilesAvailable {
+		t.Fatalf("Completeness/CommandFilesAvailable = %q/%v, want partial/false for log-only failure evidence", got.Completeness, got.CommandFilesAvailable)
+	}
+	if len(got.Sources) != 1 {
+		t.Fatalf("Sources = %#v, want one selected-log failure-block source", got.Sources)
+	}
+	logSource := got.Sources[0]
+	if logSource.Kind != domain.LogOnlyEvidenceSourceLog || logSource.Path != source.Path {
+		t.Fatalf("source = %#v, want log source at %q", logSource, source.Path)
+	}
+	if !strings.Contains(strings.ToLower(logSource.Detail), "failure") {
+		t.Fatalf("source detail = %q, want it to identify failure-block provenance", logSource.Detail)
+	}
+}
+
+func TestLogOnlyEvidenceFromFailureKeepsPartialFailureWhenFieldsAreMissing(t *testing.T) {
+	failure := domain.LogOnlyFailure{
+		Process:      "PIPE:QC",
+		ErrorSummary: "task failed before workdir was reported",
+		ErrorBlock:   "ERROR ~ Error executing process > 'PIPE:QC'",
+	}
+
+	got := LogOnlyEvidenceFromFailure(failure, domain.SourceFingerprint{Kind: domain.SourceKindLog})
+
+	if got.ID != "" || got.Workdir != "" || got.Name != "" {
+		t.Fatalf("ID/Workdir/Name = %q/%q/%q, want empty partial fields preserved", got.ID, got.Workdir, got.Name)
+	}
+	if got.Process != failure.Process || got.ErrorSummary != failure.ErrorSummary || got.ErrorBlock != failure.ErrorBlock {
+		t.Fatalf("preserved fields = %#v, want process/error fields from %#v", got, failure)
+	}
+	if got.Exit != nil {
+		t.Fatalf("Exit = %d, want nil partial failure exit", *got.Exit)
+	}
+	if got.ObservedStatus != domain.TaskStatusFailed || got.Completeness != domain.LogOnlyEvidencePartial || got.CommandFilesAvailable {
+		t.Fatalf("status/completeness/command availability = %q/%q/%v, want failed/partial/false", got.ObservedStatus, got.Completeness, got.CommandFilesAvailable)
+	}
+	if len(got.Sources) != 1 || got.Sources[0].Kind != domain.LogOnlyEvidenceSourceLog {
+		t.Fatalf("Sources = %#v, want one log source marker even when path is unavailable", got.Sources)
+	}
+}
+
+func TestEnrichLogOnlyEvidenceFromWorkdirsAddsExitAndCommandError(t *testing.T) {
+	workdir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workdir, ".exitcode"), []byte("137\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(.exitcode) returned error: %v", err)
+	}
+	commandErr := strings.Join([]string{
+		"setup complete",
+		"fatal ERROR writing sample",
+		"cleanup after failure",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(workdir, string(domain.CommandFileErr)), []byte(commandErr), 0o644); err != nil {
+		t.Fatalf("WriteFile(.command.err) returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workdir, string(domain.CommandFileLog)), []byte("fallback log should not replace stderr"), 0o644); err != nil {
+		t.Fatalf("WriteFile(.command.log) returned error: %v", err)
+	}
+
+	input := []domain.LogOnlyTaskEvidence{
+		{
+			ID:             "ab/c123def",
+			Workdir:        workdir,
+			Process:        "PIPE:ALIGN",
+			ObservedStatus: domain.TaskStatusFailed,
+			Sources: []domain.LogOnlyEvidenceSource{
+				{Kind: domain.LogOnlyEvidenceSourceLog, Path: filepath.Join(workdir, "..", "..", ".nextflow.log"), Detail: "failure block"},
+			},
+			Completeness: domain.LogOnlyEvidencePartial,
+		},
+	}
+
+	got, err := EnrichLogOnlyEvidenceFromWorkdirs(context.Background(), input, 256)
+	if err != nil {
+		t.Fatalf("EnrichLogOnlyEvidenceFromWorkdirs returned error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("EnrichLogOnlyEvidenceFromWorkdirs returned %d rows, want 1: %#v", len(got), got)
+	}
+	if input[0].Exit != nil || input[0].ErrorBlock != "" || input[0].CommandFilesAvailable {
+		t.Fatalf("input evidence was mutated: %#v", input[0])
+	}
+
+	enriched := got[0]
+	if enriched.Exit == nil || *enriched.Exit != 137 {
+		if enriched.Exit == nil {
+			t.Fatalf("Exit = nil, want 137 from .exitcode")
+		}
+		t.Fatalf("Exit = %d, want 137 from .exitcode", *enriched.Exit)
+	}
+	if enriched.ErrorBlock != commandErr {
+		t.Fatalf("ErrorBlock = %q, want bounded .command.err content %q", enriched.ErrorBlock, commandErr)
+	}
+	if enriched.ErrorSummary != commandErr {
+		t.Fatalf("ErrorSummary = %q, want deterministic summary from .command.err", enriched.ErrorSummary)
+	}
+	if !enriched.CommandFilesAvailable {
+		t.Fatalf("CommandFilesAvailable = false, want true when referenced command evidence exists")
+	}
+	if enriched.Completeness != domain.LogOnlyEvidencePartial {
+		t.Fatalf("Completeness = %q, want partial", enriched.Completeness)
+	}
+
+	exitSourcePath := filepath.Join(workdir, ".exitcode")
+	errSourcePath := filepath.Join(workdir, string(domain.CommandFileErr))
+	for _, want := range []string{exitSourcePath, errSourcePath} {
+		found := false
+		for _, source := range enriched.Sources {
+			if source.Kind == domain.LogOnlyEvidenceSourceCommand && source.Path == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("Sources = %#v, want command-file source for %q", enriched.Sources, want)
+		}
+	}
+}
+
+func TestEnrichLogOnlyEvidenceFromWorkdirsUsesCommandLogFallbackWithByteBound(t *testing.T) {
+	workdir := t.TempDir()
+	commandLog := "ERROR long command log content that must be truncated before the end"
+	if err := os.WriteFile(filepath.Join(workdir, string(domain.CommandFileLog)), []byte(commandLog), 0o644); err != nil {
+		t.Fatalf("WriteFile(.command.log) returned error: %v", err)
+	}
+
+	got, err := EnrichLogOnlyEvidenceFromWorkdirs(context.Background(), []domain.LogOnlyTaskEvidence{{Workdir: workdir}}, 18)
+	if err != nil {
+		t.Fatalf("EnrichLogOnlyEvidenceFromWorkdirs returned error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("EnrichLogOnlyEvidenceFromWorkdirs returned %d rows, want 1", len(got))
+	}
+	if got[0].ErrorBlock != commandLog[:18] {
+		t.Fatalf("ErrorBlock = %q, want first 18 bytes of .command.log %q", got[0].ErrorBlock, commandLog[:18])
+	}
+	if len(got[0].ErrorBlock) > 18 {
+		t.Fatalf("ErrorBlock length = %d, want <= 18 bytes", len(got[0].ErrorBlock))
+	}
+	if got[0].ErrorSummary != commandLog[:18] {
+		t.Fatalf("ErrorSummary = %q, want bounded summary %q", got[0].ErrorSummary, commandLog[:18])
+	}
+	if !got[0].CommandFilesAvailable {
+		t.Fatalf("CommandFilesAvailable = false, want true for .command.log fallback")
+	}
+
+	foundLogSource := false
+	for _, source := range got[0].Sources {
+		if source.Kind == domain.LogOnlyEvidenceSourceCommand && source.Path == filepath.Join(workdir, string(domain.CommandFileLog)) && strings.Contains(source.Detail, "truncated") {
+			foundLogSource = true
+			break
+		}
+	}
+	if !foundLogSource {
+		t.Fatalf("Sources = %#v, want truncated command-file source for .command.log", got[0].Sources)
+	}
+}
+
+func TestEnrichLogOnlyEvidenceFromWorkdirsSkipsMissingAndUnreferencedWorkdirs(t *testing.T) {
+	runPath := t.TempDir()
+	referencedMissing := filepath.Join(runPath, "work", "aa", "111111")
+	unreferencedWorkdir := filepath.Join(runPath, "work", "bb", "222222")
+	if err := os.MkdirAll(unreferencedWorkdir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(unreferencedWorkdir) returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(unreferencedWorkdir, ".exitcode"), []byte("99\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(unreferenced .exitcode) returned error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(unreferencedWorkdir, string(domain.CommandFileErr)), []byte("unreferenced error"), 0o644); err != nil {
+		t.Fatalf("WriteFile(unreferenced .command.err) returned error: %v", err)
+	}
+
+	got, err := EnrichLogOnlyEvidenceFromWorkdirs(context.Background(), []domain.LogOnlyTaskEvidence{
+		{ID: "aa/111111", Workdir: referencedMissing, Completeness: domain.LogOnlyEvidencePartial},
+		{ID: "", Workdir: "", Process: "PIPE:NO_WORKDIR", Completeness: domain.LogOnlyEvidencePartial},
+	}, 64)
+	if err != nil {
+		t.Fatalf("EnrichLogOnlyEvidenceFromWorkdirs returned error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("EnrichLogOnlyEvidenceFromWorkdirs returned %d rows, want 2: %#v", len(got), got)
+	}
+	for index, evidence := range got {
+		if evidence.Exit != nil || evidence.ErrorSummary != "" || evidence.ErrorBlock != "" || evidence.CommandFilesAvailable {
+			t.Fatalf("evidence[%d] = %#v, want missing/empty workdir evidence preserved without scanning unreferenced siblings", index, evidence)
+		}
+	}
+}
+
+func TestEnrichLogOnlyEvidenceFromWorkdirsRejectsInvalidInputs(t *testing.T) {
+	workdir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workdir, ".exitcode"), []byte("not-an-int\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(.exitcode) returned error: %v", err)
+	}
+
+	t.Run("nil context", func(t *testing.T) {
+		got, err := EnrichLogOnlyEvidenceFromWorkdirs(nil, []domain.LogOnlyTaskEvidence{{Workdir: workdir}}, 64)
+		if err == nil {
+			t.Fatalf("EnrichLogOnlyEvidenceFromWorkdirs(nil context) returned nil error and evidence %#v", got)
+		}
+		if got != nil {
+			t.Fatalf("evidence on error = %#v, want nil", got)
+		}
+		if !strings.Contains(err.Error(), "nil context") {
+			t.Fatalf("error = %q, want it to mention nil context", err.Error())
+		}
+	})
+
+	t.Run("canceled context", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		got, err := EnrichLogOnlyEvidenceFromWorkdirs(ctx, []domain.LogOnlyTaskEvidence{{Workdir: workdir}}, 64)
+		if err == nil {
+			t.Fatalf("EnrichLogOnlyEvidenceFromWorkdirs(canceled context) returned nil error and evidence %#v", got)
+		}
+		if got != nil {
+			t.Fatalf("evidence on error = %#v, want nil", got)
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want context.Canceled", err)
+		}
+	})
+
+	t.Run("non-positive byte bound", func(t *testing.T) {
+		for _, maxBytes := range []int64{0, -1} {
+			got, err := EnrichLogOnlyEvidenceFromWorkdirs(context.Background(), []domain.LogOnlyTaskEvidence{{Workdir: workdir}}, maxBytes)
+			if err == nil {
+				t.Fatalf("EnrichLogOnlyEvidenceFromWorkdirs(maxBytes=%d) returned nil error and evidence %#v", maxBytes, got)
+			}
+			if got != nil {
+				t.Fatalf("evidence on maxBytes=%d error = %#v, want nil", maxBytes, got)
+			}
+			if !strings.Contains(err.Error(), "max bytes") {
+				t.Fatalf("error = %q, want it to mention max bytes", err.Error())
+			}
+		}
+	})
+
+	t.Run("invalid exitcode", func(t *testing.T) {
+		got, err := EnrichLogOnlyEvidenceFromWorkdirs(context.Background(), []domain.LogOnlyTaskEvidence{{Workdir: workdir}}, 64)
+		if err == nil {
+			t.Fatalf("EnrichLogOnlyEvidenceFromWorkdirs(invalid .exitcode) returned nil error and evidence %#v", got)
+		}
+		if got != nil {
+			t.Fatalf("evidence on invalid .exitcode error = %#v, want nil", got)
+		}
+		for _, want := range []string{".exitcode", "invalid exit", "not-an-int"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
+			}
+		}
+	})
+}
+
 func TestExtractFailureBlocksParsesCommonNextflowErrorBlock(t *testing.T) {
 	input := strings.Join([]string{
 		"Apr-28 12:00:00.000 [main] INFO nextflow.Session - Session start",
@@ -729,6 +1381,166 @@ func TestNormalizeFailureBlockReturnsEvidenceExtractionErrors(t *testing.T) {
 	}
 }
 
+func TestBuildLogOnlyEvidenceStatusSummarizesObservedEvidenceAsIncomplete(t *testing.T) {
+	exit := 2
+	runDir := domain.RunDir{Path: "/runs/log-only"}
+	logSource := domain.SourceFingerprint{Kind: domain.SourceKindLog, Path: "/runs/log-only/.nextflow.log", Size: 4096}
+	artifacts := domain.ArtifactSet{
+		RunDir:           runDir,
+		Mode:             domain.IndexModeLogOnly,
+		Log:              &logSource,
+		SearchedPatterns: []string{"trace*.txt", ".nextflow*.log"},
+		Diagnostics: []domain.Diagnostic{
+			{Severity: domain.DiagnosticInfo, Code: "selected_log", Message: "selected newest Nextflow log"},
+		},
+	}
+	evidence := []domain.LogOnlyTaskEvidence{
+		{
+			ID:             "ab/c123def",
+			Process:        "PIPE:ALIGN",
+			Name:           "sample-01",
+			ObservedStatus: domain.TaskStatusCompleted,
+			Sources:        []domain.LogOnlyEvidenceSource{{Kind: domain.LogOnlyEvidenceSourceLog, Path: logSource.Path}},
+			Completeness:   domain.LogOnlyEvidencePartial,
+		},
+		{
+			ID:                    "bb/222222",
+			Workdir:               "/runs/log-only/work/bb/222222",
+			Process:               "PIPE:CALL",
+			Name:                  "tumor-02",
+			ObservedStatus:        domain.TaskStatusFailed,
+			Exit:                  &exit,
+			ErrorSummary:          "No such file or directory",
+			ErrorBlock:            "ERROR ~ Error executing process > 'PIPE:CALL (tumor-02)'",
+			Sources:               []domain.LogOnlyEvidenceSource{{Kind: domain.LogOnlyEvidenceSourceLog, Path: logSource.Path}},
+			Completeness:          domain.LogOnlyEvidencePartial,
+			CommandFilesAvailable: true,
+		},
+		{
+			ID:             "cc/333333",
+			Process:        "PIPE:STOP",
+			ObservedStatus: domain.TaskStatusAborted,
+			ErrorSummary:   "workflow aborted",
+			Completeness:   domain.LogOnlyEvidencePartial,
+		},
+		{
+			ID:             "dd/444444",
+			Process:        "PIPE:CACHE",
+			ObservedStatus: domain.TaskStatusCached,
+			Completeness:   domain.LogOnlyEvidencePartial,
+		},
+	}
+
+	got, err := BuildLogOnlyEvidenceStatus(runDir, artifacts, evidence)
+	if err != nil {
+		t.Fatalf("BuildLogOnlyEvidenceStatus returned error: %v", err)
+	}
+
+	if got.RunDir != runDir {
+		t.Fatalf("RunDir = %#v, want %#v", got.RunDir, runDir)
+	}
+	if got.Mode != domain.IndexModeLogOnly {
+		t.Fatalf("Mode = %q, want %q", got.Mode, domain.IndexModeLogOnly)
+	}
+	if got.Freshness != domain.IndexFreshnessUnsupported {
+		t.Fatalf("Freshness = %q, want %q for degraded log-only evidence", got.Freshness, domain.IndexFreshnessUnsupported)
+	}
+	if got.IndexPath != "" || got.BuiltAt != nil {
+		t.Fatalf("IndexPath/BuiltAt = %q/%#v, want no trace-backed index metadata", got.IndexPath, got.BuiltAt)
+	}
+	if got.Sources.Log == nil || *got.Sources.Log != logSource {
+		t.Fatalf("Sources.Log = %#v, want %#v", got.Sources.Log, logSource)
+	}
+
+	assertStatusCount(t, got.Counts, domain.TaskStatusAborted, 1)
+	assertStatusCount(t, got.Counts, domain.TaskStatusCached, 1)
+	assertStatusCount(t, got.Counts, domain.TaskStatusCompleted, 1)
+	assertStatusCount(t, got.Counts, domain.TaskStatusFailed, 1)
+	if len(got.Counts) != 4 {
+		t.Fatalf("Counts = %#v, want exactly four observed status counts", got.Counts)
+	}
+	if got.FailedCount != 2 {
+		t.Fatalf("FailedCount = %d, want 2 observed failed/aborted evidence rows", got.FailedCount)
+	}
+	if len(got.FailedPreview) != 0 {
+		t.Fatalf("FailedPreview = %#v, want empty because log-only evidence is not trace-backed task rows", got.FailedPreview)
+	}
+	if len(got.LogOnlyEvidence) != len(evidence) {
+		t.Fatalf("LogOnlyEvidence length = %d, want %d", len(got.LogOnlyEvidence), len(evidence))
+	}
+	if got.LogOnlyEvidence[1].ID != evidence[1].ID || got.LogOnlyEvidence[1].Exit == nil || *got.LogOnlyEvidence[1].Exit != exit || !got.LogOnlyEvidence[1].CommandFilesAvailable {
+		t.Fatalf("LogOnlyEvidence[1] = %#v, want failed evidence fields preserved", got.LogOnlyEvidence[1])
+	}
+	got.LogOnlyEvidence[0].Process = "mutated output"
+	if evidence[0].Process != "PIPE:ALIGN" {
+		t.Fatalf("input evidence was aliased and mutated: %#v", evidence[0])
+	}
+
+	assertDiagnosticWithCode(t, got.Diagnostics, "selected_log")
+	degraded := assertDiagnosticWithCode(t, got.Diagnostics, "log_only_degraded")
+	if degraded.Severity != domain.DiagnosticWarning {
+		t.Fatalf("log_only_degraded severity = %q, want %q", degraded.Severity, domain.DiagnosticWarning)
+	}
+	for _, want := range []string{"observed", "incomplete", "trace", logSource.Path, "trace*.txt"} {
+		if !strings.Contains(degraded.Message+"\n"+degraded.Detail, want) {
+			t.Fatalf("log_only_degraded diagnostic = %#v, want it to mention %q", degraded, want)
+		}
+	}
+
+	recommendation := assertDiagnosticWithCode(t, got.Diagnostics, "nextflow_with_trace_recommended")
+	if recommendation.Severity != domain.DiagnosticInfo {
+		t.Fatalf("nextflow_with_trace_recommended severity = %q, want %q", recommendation.Severity, domain.DiagnosticInfo)
+	}
+	if !strings.Contains(recommendation.Detail, "-with-trace") {
+		t.Fatalf("nextflow_with_trace_recommended detail = %q, want it to mention -with-trace", recommendation.Detail)
+	}
+}
+
+func TestBuildLogOnlyEvidenceStatusExplainsNoObservedEvidence(t *testing.T) {
+	runDir := domain.RunDir{Path: "/runs/no-trace"}
+	logSource := domain.SourceFingerprint{Kind: domain.SourceKindLog, Path: "/runs/no-trace/.nextflow.log", Size: 2048}
+	artifacts := domain.ArtifactSet{RunDir: runDir, Mode: domain.IndexModeLogOnly, Log: &logSource}
+
+	got, err := BuildLogOnlyEvidenceStatus(runDir, artifacts, nil)
+	if err != nil {
+		t.Fatalf("BuildLogOnlyEvidenceStatus returned error for empty evidence: %v", err)
+	}
+
+	if got.Mode != domain.IndexModeLogOnly {
+		t.Fatalf("Mode = %q, want %q", got.Mode, domain.IndexModeLogOnly)
+	}
+	if len(got.Counts) != 0 {
+		t.Fatalf("Counts = %#v, want no observed counts when no log-only evidence was parsed", got.Counts)
+	}
+	if got.FailedCount != 0 {
+		t.Fatalf("FailedCount = %d, want 0 observed failures", got.FailedCount)
+	}
+	if len(got.LogOnlyEvidence) != 0 {
+		t.Fatalf("LogOnlyEvidence = %#v, want empty", got.LogOnlyEvidence)
+	}
+	if len(got.FailedPreview) != 0 || len(got.LogOnlyFailures) != 0 {
+		t.Fatalf("FailedPreview/LogOnlyFailures = %#v/%#v, want neither for no-evidence log-only status", got.FailedPreview, got.LogOnlyFailures)
+	}
+
+	missingEvidence := assertDiagnosticWithCode(t, got.Diagnostics, "log_only_no_parseable_evidence")
+	if missingEvidence.Severity != domain.DiagnosticError {
+		t.Fatalf("log_only_no_parseable_evidence severity = %q, want %q", missingEvidence.Severity, domain.DiagnosticError)
+	}
+	for _, want := range []string{"No parseable", "task", logSource.Path, "complete task"} {
+		if !strings.Contains(missingEvidence.Message+"\n"+missingEvidence.Detail, want) {
+			t.Fatalf("log_only_no_parseable_evidence diagnostic = %#v, want it to mention %q", missingEvidence, want)
+		}
+	}
+
+	recommendation := assertDiagnosticWithCode(t, got.Diagnostics, "nextflow_with_trace_recommended")
+	if recommendation.Severity != domain.DiagnosticInfo {
+		t.Fatalf("nextflow_with_trace_recommended severity = %q, want %q", recommendation.Severity, domain.DiagnosticInfo)
+	}
+	if !strings.Contains(recommendation.Detail, "-with-trace") {
+		t.Fatalf("nextflow_with_trace_recommended detail = %q, want it to mention -with-trace", recommendation.Detail)
+	}
+}
+
 func TestBuildLogOnlyStatusReturnsDegradedSummaryWithFailureEvidence(t *testing.T) {
 	exit := 137
 	runDir := domain.RunDir{Path: "/runs/example"}
@@ -848,6 +1660,19 @@ func TestBuildLogOnlyStatusExplainsNoParseableFailures(t *testing.T) {
 	if !strings.Contains(recommendation.Detail, "-with-trace") {
 		t.Fatalf("nextflow_with_trace_recommended detail = %q, want it to mention -with-trace", recommendation.Detail)
 	}
+}
+
+func assertStatusCount(t *testing.T, counts []domain.StatusCount, status domain.TaskStatus, want int) {
+	t.Helper()
+	for _, count := range counts {
+		if count.Status == status {
+			if count.Count != want {
+				t.Fatalf("count for status %q = %d, want %d in %#v", status, count.Count, want, counts)
+			}
+			return
+		}
+	}
+	t.Fatalf("count for status %q not found in %#v", status, counts)
 }
 
 func assertDiagnosticWithCode(t *testing.T, diagnostics []domain.Diagnostic, code string) domain.Diagnostic {

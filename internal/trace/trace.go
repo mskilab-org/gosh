@@ -25,6 +25,294 @@ type RawRecord struct {
 	Columns  map[string]string
 }
 
+type ColumnAliasSet struct {
+	TaskID   []string
+	Hash     []string
+	NativeID []string
+	Workdir  []string
+	Process  []string
+	Name     []string
+	Tag      []string
+	Status   []string
+	Exit     []string
+	Duration []string
+	Realtime []string
+	CPU      []string
+	Memory   []string
+	PeakRSS  []string
+	PeakVMem []string
+}
+
+type NameParts struct {
+	FullName      string
+	Process       string
+	Tag           string
+	SelectorTerms []string
+}
+
+type NormalizedRecord struct {
+	RowOrder   int64
+	TaskID     string
+	Hash       string
+	NativeID   string
+	Workdir    string
+	Process    string
+	Name       string
+	Tag        string
+	Status     string
+	Exit       string
+	Duration   string
+	Realtime   string
+	CPUDisplay string
+	Memory     string
+	PeakRSS    string
+	PeakVMem   string
+	Columns    map[string]string
+}
+
+func DefaultColumnAliasSet() ColumnAliasSet {
+	return ColumnAliasSet{
+		TaskID:   []string{"task_id", "taskid", "task"},
+		Hash:     []string{"hash"},
+		NativeID: []string{"native_id", "nativeid", "native id"},
+		Workdir:  []string{"workdir", "work_dir", "work-dir", "work directory"},
+		Process:  []string{"process", "module"},
+		Name:     []string{"name"},
+		Tag:      []string{"tag"},
+		Status:   []string{"status"},
+		Exit:     []string{"exit", "exit_status", "exitstatus", "exit_code", "exitcode"},
+		Duration: []string{"duration"},
+		Realtime: []string{"realtime", "real_time", "real time", "walltime", "wall_time"},
+		CPU:      []string{"cpus", "cpu", "%cpu", "pcpu"},
+		Memory:   []string{"memory", "mem"},
+		PeakRSS:  []string{"peak_rss", "peak-rss", "rss"},
+		PeakVMem: []string{"peak_vmem", "peak-vmem", "vmem"},
+	}
+}
+
+func NormalizeRecordColumns(record RawRecord, aliases ColumnAliasSet) (NormalizedRecord, error) {
+	type aliasGroup struct {
+		name    string
+		aliases []string
+		set     func(*NormalizedRecord, string)
+	}
+
+	normalizeColumnName := func(value string) string {
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+
+	groups := []aliasGroup{
+		{name: "task_id", aliases: aliases.TaskID, set: func(normalized *NormalizedRecord, value string) { normalized.TaskID = value }},
+		{name: "hash", aliases: aliases.Hash, set: func(normalized *NormalizedRecord, value string) { normalized.Hash = value }},
+		{name: "native_id", aliases: aliases.NativeID, set: func(normalized *NormalizedRecord, value string) { normalized.NativeID = value }},
+		{name: "workdir", aliases: aliases.Workdir, set: func(normalized *NormalizedRecord, value string) { normalized.Workdir = value }},
+		{name: "process", aliases: aliases.Process, set: func(normalized *NormalizedRecord, value string) { normalized.Process = value }},
+		{name: "name", aliases: aliases.Name, set: func(normalized *NormalizedRecord, value string) { normalized.Name = value }},
+		{name: "tag", aliases: aliases.Tag, set: func(normalized *NormalizedRecord, value string) { normalized.Tag = value }},
+		{name: "status", aliases: aliases.Status, set: func(normalized *NormalizedRecord, value string) { normalized.Status = value }},
+		{name: "exit", aliases: aliases.Exit, set: func(normalized *NormalizedRecord, value string) { normalized.Exit = value }},
+		{name: "duration", aliases: aliases.Duration, set: func(normalized *NormalizedRecord, value string) { normalized.Duration = value }},
+		{name: "realtime", aliases: aliases.Realtime, set: func(normalized *NormalizedRecord, value string) { normalized.Realtime = value }},
+		{name: "cpu", aliases: aliases.CPU, set: func(normalized *NormalizedRecord, value string) { normalized.CPUDisplay = value }},
+		{name: "memory", aliases: aliases.Memory, set: func(normalized *NormalizedRecord, value string) { normalized.Memory = value }},
+		{name: "peak_rss", aliases: aliases.PeakRSS, set: func(normalized *NormalizedRecord, value string) { normalized.PeakRSS = value }},
+		{name: "peak_vmem", aliases: aliases.PeakVMem, set: func(normalized *NormalizedRecord, value string) { normalized.PeakVMem = value }},
+	}
+
+	visitUniqueAliases := func(group aliasGroup, visit func(alias string, key string) (bool, error)) error {
+		seenInGroup := make(map[string]bool, len(group.aliases))
+		for _, alias := range group.aliases {
+			key := normalizeColumnName(alias)
+			if key == "" {
+				return fmt.Errorf("normalize record columns: blank alias for %s", group.name)
+			}
+			if seenInGroup[key] {
+				continue
+			}
+			seenInGroup[key] = true
+			stop, err := visit(alias, key)
+			if err != nil {
+				return err
+			}
+			if stop {
+				return nil
+			}
+		}
+		return nil
+	}
+
+	aliasOwners := make(map[string]string)
+	for _, group := range groups {
+		if err := visitUniqueAliases(group, func(alias string, key string) (bool, error) {
+			if owner, ok := aliasOwners[key]; ok && owner != group.name {
+				return false, fmt.Errorf("normalize record columns: alias %q maps to both %s and %s", alias, owner, group.name)
+			}
+			aliasOwners[key] = group.name
+			return false, nil
+		}); err != nil {
+			return NormalizedRecord{}, err
+		}
+	}
+
+	normalized := NormalizedRecord{
+		RowOrder: record.RowOrder,
+		Columns:  make(map[string]string, len(record.Columns)),
+	}
+
+	rawColumnsByAliasKey := make(map[string]string, len(record.Columns))
+	for columnName, value := range record.Columns {
+		normalized.Columns[columnName] = value
+
+		key := normalizeColumnName(columnName)
+		if existingColumnName, ok := rawColumnsByAliasKey[key]; ok && existingColumnName != columnName {
+			if _, isKnownAlias := aliasOwners[key]; isKnownAlias {
+				return NormalizedRecord{}, fmt.Errorf("normalize record columns: column names %q and %q both match alias %q", existingColumnName, columnName, key)
+			}
+			continue
+		}
+		rawColumnsByAliasKey[key] = columnName
+	}
+
+	for _, group := range groups {
+		if err := visitUniqueAliases(group, func(alias string, key string) (bool, error) {
+			columnName, ok := rawColumnsByAliasKey[key]
+			if !ok {
+				return false, nil
+			}
+			group.set(&normalized, record.Columns[columnName])
+			return true, nil
+		}); err != nil {
+			return NormalizedRecord{}, err
+		}
+	}
+
+	return normalized, nil
+}
+
+func DeriveNameParts(fullName string) NameParts {
+	trimmed := strings.TrimSpace(fullName)
+	if trimmed == "" {
+		return NameParts{}
+	}
+
+	parts := NameParts{
+		FullName: trimmed,
+		Process:  trimmed,
+	}
+
+	if strings.HasSuffix(trimmed, ")") {
+		open := strings.LastIndex(trimmed, " (")
+		if open > 0 && open < len(trimmed)-1 {
+			process := strings.TrimSpace(trimmed[:open])
+			tag := strings.TrimSpace(trimmed[open+2 : len(trimmed)-1])
+			if process != "" && tag != "" && !strings.ContainsAny(tag, "()") {
+				parts.Process = process
+				parts.Tag = tag
+			}
+		}
+	}
+
+	seen := make(map[string]bool, 3)
+	addTerm := func(term string) {
+		term = strings.TrimSpace(term)
+		if term == "" || seen[term] {
+			return
+		}
+		seen[term] = true
+		parts.SelectorTerms = append(parts.SelectorTerms, term)
+	}
+
+	addTerm(parts.FullName)
+	addTerm(parts.Process)
+	addTerm(parts.Tag)
+
+	return parts
+}
+
+func TaskFromNormalizedRecord(runDir domain.RunDir, record NormalizedRecord) (domain.Task, error) {
+	candidates := []struct {
+		name  string
+		value string
+	}{
+		{name: "hash", value: record.Hash},
+		{name: "workdir", value: record.Workdir},
+	}
+
+	canonicalID := ""
+	parseErrors := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate.value) == "" {
+			continue
+		}
+
+		id, err := DeriveCanonicalTaskID(candidate.value)
+		if err == nil {
+			canonicalID = id
+			break
+		}
+		parseErrors = append(parseErrors, fmt.Sprintf("%s %q: %v", candidate.name, candidate.value, err))
+	}
+
+	if canonicalID == "" {
+		detail := "missing hash and workdir columns"
+		if len(parseErrors) > 0 {
+			detail = strings.Join(parseErrors, "; ")
+		}
+		return domain.Task{}, fmt.Errorf("task from normalized record row %d: no parseable hash or workdir (%s)", record.RowOrder, detail)
+	}
+
+	workdirInput := record.Workdir
+	if strings.TrimSpace(workdirInput) == "" {
+		workdirInput = record.Hash
+	}
+	workdir, err := ResolveTaskWorkdir(runDir, canonicalID, workdirInput)
+	if err != nil {
+		return domain.Task{}, fmt.Errorf("task from normalized record row %d: resolve workdir for task %q: %w", record.RowOrder, canonicalID, err)
+	}
+
+	exit, err := ParseNullableExit(record.Exit)
+	if err != nil {
+		return domain.Task{}, fmt.Errorf("task from normalized record row %d: parse exit for task %q: %w", record.RowOrder, canonicalID, err)
+	}
+
+	nameParts := DeriveNameParts(record.Name)
+	process := record.Process
+	if strings.TrimSpace(process) == "" {
+		process = nameParts.Process
+	}
+	tag := record.Tag
+	if strings.TrimSpace(tag) == "" {
+		tag = nameParts.Tag
+	}
+
+	memoryDisplay := record.Memory
+	if strings.TrimSpace(memoryDisplay) == "" {
+		peakDisplays := make([]string, 0, 2)
+		if peakRSS := strings.TrimSpace(record.PeakRSS); peakRSS != "" {
+			peakDisplays = append(peakDisplays, "peak_rss="+peakRSS)
+		}
+		if peakVMem := strings.TrimSpace(record.PeakVMem); peakVMem != "" {
+			peakDisplays = append(peakDisplays, "peak_vmem="+peakVMem)
+		}
+		memoryDisplay = strings.Join(peakDisplays, "; ")
+	}
+
+	return domain.Task{
+		RowOrder: record.RowOrder,
+		ID:       canonicalID,
+		Status:   NormalizeTaskStatus(record.Status),
+		Process:  process,
+		Name:     record.Name,
+		Tag:      tag,
+		Workdir:  workdir,
+		Exit:     exit,
+		Duration: record.Duration,
+		Realtime: record.Realtime,
+		CPUs:     record.CPUDisplay,
+		Memory:   memoryDisplay,
+	}, nil
+}
+
 func isHexString(value string) bool {
 	if value == "" {
 		return false
@@ -206,75 +494,20 @@ func ParseTraceRecords(reader io.Reader, delimiter Delimiter) ([]RawRecord, erro
 }
 
 func NormalizeTraceRecord(runDir domain.RunDir, record RawRecord) (domain.Task, error) {
-	column := func(name string) string {
-		if record.Columns == nil {
-			return ""
-		}
-		return record.Columns[name]
-	}
-
-	hash := column("hash")
-	rawWorkdir := column("workdir")
-
-	candidates := []struct {
-		name  string
-		value string
-	}{
-		{name: "hash", value: hash},
-		{name: "workdir", value: rawWorkdir},
-	}
-
-	canonicalID := ""
-	parseErrors := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		if strings.TrimSpace(candidate.value) == "" {
-			continue
-		}
-
-		id, err := DeriveCanonicalTaskID(candidate.value)
-		if err == nil {
-			canonicalID = id
-			break
-		}
-		parseErrors = append(parseErrors, fmt.Sprintf("%s %q: %v", candidate.name, candidate.value, err))
-	}
-
-	if canonicalID == "" {
-		detail := "missing hash and workdir columns"
-		if len(parseErrors) > 0 {
-			detail = strings.Join(parseErrors, "; ")
-		}
-		return domain.Task{}, fmt.Errorf("normalize trace record row %d: no parseable hash or workdir (%s)", record.RowOrder, detail)
-	}
-
-	workdirInput := rawWorkdir
-	if strings.TrimSpace(workdirInput) == "" {
-		workdirInput = hash
-	}
-	workdir, err := ResolveTaskWorkdir(runDir, canonicalID, workdirInput)
+	normalized, err := NormalizeRecordColumns(record, DefaultColumnAliasSet())
 	if err != nil {
-		return domain.Task{}, fmt.Errorf("normalize trace record row %d: resolve workdir for task %q: %w", record.RowOrder, canonicalID, err)
+		return domain.Task{}, fmt.Errorf("normalize trace record row %d: %w", record.RowOrder, err)
 	}
 
-	exit, err := ParseNullableExit(column("exit"))
+	task, err := TaskFromNormalizedRecord(runDir, normalized)
 	if err != nil {
-		return domain.Task{}, fmt.Errorf("normalize trace record row %d: parse exit for task %q: %w", record.RowOrder, canonicalID, err)
+		return domain.Task{}, fmt.Errorf("normalize trace record row %d: %w", record.RowOrder, err)
+	}
+	if strings.TrimSpace(normalized.Process) != "" && strings.TrimSpace(normalized.Tag) == "" {
+		task.Tag = ""
 	}
 
-	return domain.Task{
-		RowOrder: record.RowOrder,
-		ID:       canonicalID,
-		Status:   NormalizeTaskStatus(column("status")),
-		Process:  column("process"),
-		Name:     column("name"),
-		Tag:      column("tag"),
-		Workdir:  workdir,
-		Exit:     exit,
-		Duration: column("duration"),
-		Realtime: column("realtime"),
-		CPUs:     column("cpus"),
-		Memory:   column("memory"),
-	}, nil
+	return task, nil
 }
 
 func NormalizeTaskStatus(raw string) domain.TaskStatus {

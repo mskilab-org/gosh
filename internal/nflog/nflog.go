@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -59,6 +60,53 @@ func firstHeaderValue(lines []string, pattern *regexp.Regexp) (string, bool) {
 	return "", false
 }
 
+func readNormalizedLogText(reader io.Reader, context string) (string, error) {
+	if reader == nil {
+		return "", fmt.Errorf("%s: nil reader", context)
+	}
+
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return "", fmt.Errorf("%s: read log: %w", context, err)
+	}
+
+	return normalizeLogText(string(data)), nil
+}
+
+func selectedLogPath(artifacts domain.ArtifactSet) string {
+	if artifacts.Log != nil && artifacts.Log.Path != "" {
+		return artifacts.Log.Path
+	}
+	return "selected Nextflow log"
+}
+
+func searchedPatternsText(artifacts domain.ArtifactSet) string {
+	if len(artifacts.SearchedPatterns) == 0 {
+		return ""
+	}
+	return strings.Join(artifacts.SearchedPatterns, ", ")
+}
+
+func splitProcessLabel(label string) (string, string) {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return "", ""
+	}
+
+	if strings.HasSuffix(label, ")") {
+		open := strings.LastIndex(label, " (")
+		if open > 0 && open < len(label)-1 {
+			process := strings.TrimSpace(label[:open])
+			name := strings.TrimSpace(label[open+2 : len(label)-1])
+			if process != "" && name != "" && !strings.ContainsAny(name, "()") {
+				return process, name
+			}
+		}
+	}
+
+	return label, ""
+}
+
 func ParseLogOnlyFailures(ctx context.Context, runDir domain.RunDir, source domain.SourceFingerprint) ([]domain.LogOnlyFailure, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("parse log-only failures: nil context")
@@ -97,17 +145,651 @@ func ParseLogOnlyFailures(ctx context.Context, runDir domain.RunDir, source doma
 	return failures, nil
 }
 
-func ExtractFailureBlocks(reader io.Reader) ([]FailureBlock, error) {
-	if reader == nil {
-		return nil, fmt.Errorf("extract failure blocks: nil reader")
+func ParseLogOnlyTaskEvidence(ctx context.Context, runDir domain.RunDir, source domain.SourceFingerprint) ([]domain.LogOnlyTaskEvidence, error) {
+	const workdirEvidenceMaxBytes int64 = 4096
+
+	if ctx == nil {
+		return nil, fmt.Errorf("parse log-only task evidence: nil context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("parse log-only task evidence: %w", err)
+	}
+	if source.Kind != domain.SourceKindLog {
+		return nil, fmt.Errorf("parse log-only task evidence: invalid log source kind %q (want %q)", source.Kind, domain.SourceKindLog)
 	}
 
-	data, err := io.ReadAll(reader)
+	file, err := os.Open(source.Path)
 	if err != nil {
-		return nil, fmt.Errorf("extract failure blocks: read log: %w", err)
+		return nil, fmt.Errorf("parse log-only task evidence: open source %q: %w", source.Path, err)
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, fmt.Errorf("parse log-only task evidence: read source %q: %w", source.Path, err)
+	}
+	text := string(data)
+
+	lifecycleEvidence, err := ExtractLifecycleEvidence(strings.NewReader(text))
+	if err != nil {
+		return nil, fmt.Errorf("parse log-only task evidence: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("parse log-only task evidence: %w", err)
 	}
 
-	text := normalizeLogText(string(data))
+	failureBlocks, err := ExtractFailureBlocks(strings.NewReader(text))
+	if err != nil {
+		return nil, fmt.Errorf("parse log-only task evidence: %w", err)
+	}
+
+	copyExit := func(exit *int) *int {
+		if exit == nil {
+			return nil
+		}
+		value := *exit
+		return &value
+	}
+
+	copySources := func(sources []domain.LogOnlyEvidenceSource) []domain.LogOnlyEvidenceSource {
+		if len(sources) == 0 {
+			return nil
+		}
+		return append([]domain.LogOnlyEvidenceSource(nil), sources...)
+	}
+
+	markLogSourcePath := func(item domain.LogOnlyTaskEvidence) domain.LogOnlyTaskEvidence {
+		for index := range item.Sources {
+			if item.Sources[index].Path == "" {
+				item.Sources[index].Path = source.Path
+			}
+		}
+		return item
+	}
+
+	resolveReferencedWorkdir := func(item domain.LogOnlyTaskEvidence) (domain.LogOnlyTaskEvidence, error) {
+		if strings.TrimSpace(item.Workdir) != "" || strings.TrimSpace(item.ID) == "" {
+			return item, nil
+		}
+
+		workdir, err := trace.ResolveTaskWorkdir(runDir, item.ID, item.ID)
+		if err != nil {
+			return item, err
+		}
+		item.Workdir = workdir
+		return item, nil
+	}
+
+	mergeEvidence := func(existing *domain.LogOnlyTaskEvidence, next domain.LogOnlyTaskEvidence) {
+		if existing.ID == "" && next.ID != "" {
+			existing.ID = next.ID
+		}
+		if next.Workdir != "" {
+			existing.Workdir = next.Workdir
+		}
+		if next.Process != "" {
+			existing.Process = next.Process
+		}
+		if next.Name != "" {
+			existing.Name = next.Name
+		}
+		if next.ObservedStatus != "" {
+			existing.ObservedStatus = next.ObservedStatus
+		}
+		if next.Exit != nil {
+			existing.Exit = copyExit(next.Exit)
+		}
+		if next.ErrorSummary != "" {
+			existing.ErrorSummary = next.ErrorSummary
+		}
+		if next.ErrorBlock != "" {
+			existing.ErrorBlock = next.ErrorBlock
+		}
+		if len(next.Sources) > 0 {
+			existing.Sources = append(existing.Sources, copySources(next.Sources)...)
+		}
+		if next.Completeness != "" {
+			existing.Completeness = next.Completeness
+		} else if existing.Completeness == "" {
+			existing.Completeness = domain.LogOnlyEvidencePartial
+		}
+		if next.CommandFilesAvailable {
+			existing.CommandFilesAvailable = true
+		}
+	}
+
+	evidence := make([]domain.LogOnlyTaskEvidence, 0, len(lifecycleEvidence)+len(failureBlocks))
+	byID := make(map[string]int)
+	appendOrMerge := func(item domain.LogOnlyTaskEvidence) {
+		if item.Completeness == "" {
+			item.Completeness = domain.LogOnlyEvidencePartial
+		}
+		item.Sources = copySources(item.Sources)
+		item.Exit = copyExit(item.Exit)
+
+		id := strings.TrimSpace(item.ID)
+		if id != "" {
+			item.ID = id
+			if index, ok := byID[id]; ok {
+				mergeEvidence(&evidence[index], item)
+				return
+			}
+			byID[id] = len(evidence)
+		}
+
+		evidence = append(evidence, item)
+	}
+
+	for _, item := range lifecycleEvidence {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("parse log-only task evidence: %w", err)
+		}
+
+		item = markLogSourcePath(item)
+		item, err = resolveReferencedWorkdir(item)
+		if err != nil {
+			return nil, fmt.Errorf("parse log-only task evidence: resolve lifecycle workdir %q: %w", item.ID, err)
+		}
+		appendOrMerge(item)
+	}
+
+	for _, block := range failureBlocks {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("parse log-only task evidence: %w", err)
+		}
+
+		failure, err := NormalizeFailureBlock(runDir, block)
+		if err != nil {
+			return nil, fmt.Errorf("parse log-only task evidence: %w", err)
+		}
+		appendOrMerge(LogOnlyEvidenceFromFailure(failure, source))
+	}
+
+	enriched, err := EnrichLogOnlyEvidenceFromWorkdirs(ctx, evidence, workdirEvidenceMaxBytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse log-only task evidence: %w", err)
+	}
+	return enriched, nil
+}
+
+func ExtractLifecycleEvidence(reader io.Reader) ([]domain.LogOnlyTaskEvidence, error) {
+	text, err := readNormalizedLogText(reader, "extract lifecycle evidence")
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(text) == "" {
+		return []domain.LogOnlyTaskEvidence{}, nil
+	}
+
+	lifecycleLine := regexp.MustCompile(`(?i)\[([0-9a-f]{2}/[0-9a-f]+|[0-9a-f]{3,})\]\s+((?:re[-\s]*)?submitted|submit|cached|completed|complete|failed|aborted|started|running|launch(?:ed|ing)?)\s+process\s*>\s*(.+?)\s*$`)
+
+	statusFromEvent := func(event string) domain.TaskStatus {
+		normalized := strings.ToLower(strings.TrimSpace(event))
+		normalized = strings.ReplaceAll(normalized, "-", "")
+		normalized = strings.ReplaceAll(normalized, " ", "")
+
+		switch {
+		case strings.Contains(normalized, "cache"):
+			return domain.TaskStatusCached
+		case strings.Contains(normalized, "complete"):
+			return domain.TaskStatusCompleted
+		case strings.Contains(normalized, "fail"):
+			return domain.TaskStatusFailed
+		case strings.Contains(normalized, "abort"):
+			return domain.TaskStatusAborted
+		case strings.Contains(normalized, "submit"):
+			return domain.TaskStatusSubmitted
+		case strings.Contains(normalized, "start") || strings.Contains(normalized, "run") || strings.Contains(normalized, "launch"):
+			return domain.TaskStatusRunning
+		default:
+			return domain.TaskStatusUnknown
+		}
+	}
+
+	evidence := make([]domain.LogOnlyTaskEvidence, 0)
+	seen := make(map[string]int)
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		matches := lifecycleLine.FindStringSubmatch(line)
+		if len(matches) != 4 {
+			continue
+		}
+
+		id, err := trace.DeriveCanonicalTaskID(matches[1])
+		if err != nil {
+			continue
+		}
+
+		status := statusFromEvent(matches[2])
+		if status == domain.TaskStatusUnknown {
+			continue
+		}
+
+		process, name := splitProcessLabel(cleanSimpleEvidenceValue(matches[3]))
+		source := domain.LogOnlyEvidenceSource{
+			Kind:   domain.LogOnlyEvidenceSourceLog,
+			Detail: fmt.Sprintf("lifecycle line %d: %s process", i+1, strings.ToLower(strings.TrimSpace(matches[2]))),
+		}
+
+		if index, ok := seen[id]; ok {
+			if process != "" {
+				evidence[index].Process = process
+			}
+			if name != "" {
+				evidence[index].Name = name
+			}
+			evidence[index].ObservedStatus = status
+			evidence[index].Sources = append(evidence[index].Sources, source)
+			continue
+		}
+
+		seen[id] = len(evidence)
+		evidence = append(evidence, domain.LogOnlyTaskEvidence{
+			ID:             id,
+			Process:        process,
+			Name:           name,
+			ObservedStatus: status,
+			Sources:        []domain.LogOnlyEvidenceSource{source},
+			Completeness:   domain.LogOnlyEvidencePartial,
+		})
+	}
+
+	return evidence, nil
+}
+
+func LogOnlyEvidenceFromFailure(failure domain.LogOnlyFailure, source domain.SourceFingerprint) domain.LogOnlyTaskEvidence {
+	return domain.LogOnlyTaskEvidence{
+		ID:             failure.ID,
+		Workdir:        failure.Workdir,
+		Process:        failure.Process,
+		Name:           failure.Name,
+		ObservedStatus: domain.TaskStatusFailed,
+		Exit:           failure.Exit,
+		ErrorSummary:   failure.ErrorSummary,
+		ErrorBlock:     failure.ErrorBlock,
+		Sources: []domain.LogOnlyEvidenceSource{
+			{
+				Kind:   domain.LogOnlyEvidenceSourceLog,
+				Path:   source.Path,
+				Detail: "failure block parsed from selected log",
+			},
+		},
+		Completeness: domain.LogOnlyEvidencePartial,
+	}
+}
+
+func EnrichLogOnlyEvidenceFromWorkdirs(ctx context.Context, evidence []domain.LogOnlyTaskEvidence, maxBytes int64) ([]domain.LogOnlyTaskEvidence, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("enrich log-only evidence from workdirs: nil context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("enrich log-only evidence from workdirs: %w", err)
+	}
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("enrich log-only evidence from workdirs: max bytes must be positive")
+	}
+
+	type workdirEvidence struct {
+		exit                  *int
+		errorSummary          string
+		errorBlock            string
+		sources               []domain.LogOnlyEvidenceSource
+		commandFilesAvailable bool
+	}
+
+	maxBytesAsInt := func() int {
+		maxInt := int(^uint(0) >> 1)
+		if maxBytes > int64(maxInt) {
+			return maxInt
+		}
+		return int(maxBytes)
+	}
+
+	statRegularFile := func(path string) (bool, error) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+
+		info, err := os.Stat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("stat %q: %w", path, err)
+		}
+		if info.IsDir() {
+			return false, fmt.Errorf("%q is a directory", path)
+		}
+		return true, nil
+	}
+
+	readBoundedText := func(path string) (string, bool, error) {
+		if err := ctx.Err(); err != nil {
+			return "", false, err
+		}
+
+		file, err := os.Open(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", false, nil
+			}
+			return "", false, fmt.Errorf("open %q: %w", path, err)
+		}
+		defer file.Close()
+
+		limit := maxBytes + 1
+		if limit <= maxBytes {
+			limit = maxBytes
+		}
+		data, err := io.ReadAll(io.LimitReader(file, limit))
+		if err != nil {
+			return "", false, fmt.Errorf("read %q: %w", path, err)
+		}
+
+		truncated := int64(len(data)) > maxBytes
+		if truncated {
+			data = data[:len(data)-1]
+		}
+		return normalizeLogText(string(data)), truncated, nil
+	}
+
+	parseExitCode := func(path string, content string) (*int, error) {
+		value := cleanSimpleEvidenceValue(content)
+		if value == "" {
+			return nil, fmt.Errorf("read .exitcode %q: invalid exit value: missing value", path)
+		}
+
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return nil, fmt.Errorf("read .exitcode %q: invalid exit value %q: %w", path, value, err)
+		}
+		return &parsed, nil
+	}
+
+	enrichWorkdir := func(workdir string) (workdirEvidence, error) {
+		result := workdirEvidence{}
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+
+		cleanWorkdir := filepath.Clean(workdir)
+		info, err := os.Stat(cleanWorkdir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return result, nil
+			}
+			return result, fmt.Errorf("stat referenced workdir %q: %w", cleanWorkdir, err)
+		}
+		if !info.IsDir() {
+			return result, fmt.Errorf("referenced workdir %q is not a directory", cleanWorkdir)
+		}
+
+		result.sources = append(result.sources, domain.LogOnlyEvidenceSource{
+			Kind:   domain.LogOnlyEvidenceSourceWorkdir,
+			Path:   cleanWorkdir,
+			Detail: "referenced workdir checked for .exitcode, .command.err, and .command.log evidence",
+		})
+
+		exitPath := filepath.Join(cleanWorkdir, ".exitcode")
+		exitExists, err := statRegularFile(exitPath)
+		if err != nil {
+			return result, fmt.Errorf("enrich referenced workdir %q: %w", cleanWorkdir, err)
+		}
+		if exitExists {
+			content, truncated, err := readBoundedText(exitPath)
+			if err != nil {
+				return result, fmt.Errorf("enrich referenced workdir %q: %w", cleanWorkdir, err)
+			}
+			if truncated {
+				return result, fmt.Errorf("read .exitcode %q: invalid exit value: file exceeds max bytes %d", exitPath, maxBytes)
+			}
+
+			exit, err := parseExitCode(exitPath, content)
+			if err != nil {
+				return result, fmt.Errorf("enrich referenced workdir %q: %w", cleanWorkdir, err)
+			}
+			result.exit = exit
+			result.commandFilesAvailable = true
+			result.sources = append(result.sources, domain.LogOnlyEvidenceSource{
+				Kind:   domain.LogOnlyEvidenceSourceCommand,
+				Path:   exitPath,
+				Detail: "parsed exit code from .exitcode",
+			})
+		}
+
+		for _, kind := range []domain.CommandFileKind{domain.CommandFileErr, domain.CommandFileLog} {
+			path := filepath.Join(cleanWorkdir, string(kind))
+			exists, err := statRegularFile(path)
+			if err != nil {
+				return result, fmt.Errorf("enrich referenced workdir %q: %w", cleanWorkdir, err)
+			}
+			if !exists {
+				continue
+			}
+
+			result.commandFilesAvailable = true
+			content, truncated, err := readBoundedText(path)
+			if err != nil {
+				return result, fmt.Errorf("enrich referenced workdir %q: %w", cleanWorkdir, err)
+			}
+
+			detail := fmt.Sprintf("read bounded %s evidence (max %d bytes)", kind, maxBytes)
+			if truncated {
+				detail = fmt.Sprintf("read bounded %s evidence (max %d bytes; truncated)", kind, maxBytes)
+			}
+			result.sources = append(result.sources, domain.LogOnlyEvidenceSource{
+				Kind:   domain.LogOnlyEvidenceSourceCommand,
+				Path:   path,
+				Detail: detail,
+			})
+
+			if strings.TrimSpace(content) == "" {
+				continue
+			}
+			result.errorBlock = content
+			result.errorSummary = SummarizeErrorBlock(content, maxBytesAsInt())
+			break
+		}
+
+		return result, nil
+	}
+
+	enriched := make([]domain.LogOnlyTaskEvidence, len(evidence))
+	copy(enriched, evidence)
+
+	byWorkdir := make(map[string]workdirEvidence)
+	for index := range enriched {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("enrich log-only evidence from workdirs: %w", err)
+		}
+
+		workdir := strings.TrimSpace(enriched[index].Workdir)
+		if workdir == "" {
+			continue
+		}
+		workdir = filepath.Clean(workdir)
+
+		details, ok := byWorkdir[workdir]
+		if !ok {
+			var err error
+			details, err = enrichWorkdir(workdir)
+			if err != nil {
+				return nil, fmt.Errorf("enrich log-only evidence from workdirs: %w", err)
+			}
+			byWorkdir[workdir] = details
+		}
+
+		changed := false
+		if details.exit != nil && enriched[index].Exit == nil {
+			exit := *details.exit
+			enriched[index].Exit = &exit
+			changed = true
+		}
+		if details.errorBlock != "" {
+			if strings.TrimSpace(enriched[index].ErrorBlock) == "" {
+				enriched[index].ErrorBlock = details.errorBlock
+				changed = true
+			}
+			if strings.TrimSpace(enriched[index].ErrorSummary) == "" {
+				enriched[index].ErrorSummary = details.errorSummary
+				changed = true
+			}
+		}
+		if details.commandFilesAvailable && !enriched[index].CommandFilesAvailable {
+			enriched[index].CommandFilesAvailable = true
+			changed = true
+		}
+		if len(details.sources) > 0 {
+			enriched[index].Sources = append(enriched[index].Sources, details.sources...)
+			changed = true
+		}
+		if changed && enriched[index].Completeness == "" {
+			enriched[index].Completeness = domain.LogOnlyEvidencePartial
+		}
+	}
+
+	return enriched, nil
+}
+
+func BuildLogOnlyEvidenceStatus(runDir domain.RunDir, artifacts domain.ArtifactSet, evidence []domain.LogOnlyTaskEvidence) (domain.StatusSummary, error) {
+	logOnlyEvidence := make([]domain.LogOnlyTaskEvidence, len(evidence))
+	for index := range evidence {
+		logOnlyEvidence[index] = evidence[index]
+		if evidence[index].Exit != nil {
+			exit := *evidence[index].Exit
+			logOnlyEvidence[index].Exit = &exit
+		}
+		if len(evidence[index].Sources) > 0 {
+			logOnlyEvidence[index].Sources = append([]domain.LogOnlyEvidenceSource(nil), evidence[index].Sources...)
+		}
+	}
+
+	selectedLog := selectedLogPath(artifacts)
+	searchedPatterns := searchedPatternsText(artifacts)
+
+	isFailureLikeStatus := func(status domain.TaskStatus) bool {
+		return status == domain.TaskStatusFailed || status == domain.TaskStatusAborted
+	}
+
+	countsByStatus := make(map[domain.TaskStatus]int)
+	firstSeenStatuses := make([]domain.TaskStatus, 0)
+	failedCount := 0
+	logOnlyFailures := make([]domain.LogOnlyFailure, 0)
+	for _, item := range logOnlyEvidence {
+		if item.ObservedStatus != "" {
+			if _, ok := countsByStatus[item.ObservedStatus]; !ok {
+				firstSeenStatuses = append(firstSeenStatuses, item.ObservedStatus)
+			}
+			countsByStatus[item.ObservedStatus]++
+		}
+
+		if isFailureLikeStatus(item.ObservedStatus) {
+			failedCount++
+			logOnlyFailures = append(logOnlyFailures, domain.LogOnlyFailure{
+				ID:           item.ID,
+				Workdir:      item.Workdir,
+				Process:      item.Process,
+				Name:         item.Name,
+				Exit:         item.Exit,
+				ErrorSummary: item.ErrorSummary,
+				ErrorBlock:   item.ErrorBlock,
+			})
+		}
+	}
+
+	orderedKnownStatuses := []domain.TaskStatus{
+		domain.TaskStatusAborted,
+		domain.TaskStatusCached,
+		domain.TaskStatusCompleted,
+		domain.TaskStatusFailed,
+		domain.TaskStatusRunning,
+		domain.TaskStatusSubmitted,
+		domain.TaskStatusUnknown,
+	}
+	counts := make([]domain.StatusCount, 0, len(countsByStatus))
+	usedStatus := make(map[domain.TaskStatus]bool, len(countsByStatus))
+	for _, status := range orderedKnownStatuses {
+		if count, ok := countsByStatus[status]; ok {
+			counts = append(counts, domain.StatusCount{Status: status, Count: count})
+			usedStatus[status] = true
+		}
+	}
+	for _, status := range firstSeenStatuses {
+		if usedStatus[status] {
+			continue
+		}
+		counts = append(counts, domain.StatusCount{Status: status, Count: countsByStatus[status]})
+		usedStatus[status] = true
+	}
+
+	degradedDetail := []string{
+		"Selected log: " + selectedLog,
+		fmt.Sprintf("Observed log-only evidence rows: %d", len(logOnlyEvidence)),
+		"Observed status counts are incomplete because log-only evidence is not a complete task table.",
+		"Complete task counts, per-status totals, durations, CPU, and memory data require a Nextflow trace file.",
+	}
+	if searchedPatterns != "" {
+		degradedDetail = append(degradedDetail, "Searched patterns: "+searchedPatterns)
+	}
+
+	diagnostics := make([]domain.Diagnostic, 0, len(artifacts.Diagnostics)+3)
+	diagnostics = append(diagnostics, artifacts.Diagnostics...)
+	diagnostics = append(diagnostics, domain.Diagnostic{
+		Severity: domain.DiagnosticWarning,
+		Code:     "log_only_degraded",
+		Message:  "log-only status is degraded; observed counts are incomplete and complete task/resource/status data is unavailable",
+		Detail:   strings.Join(degradedDetail, "\n"),
+	})
+
+	if len(logOnlyEvidence) == 0 {
+		missingDetail := []string{
+			"Selected log: " + selectedLog,
+			"No parseable task, lifecycle, failure, or workdir evidence was found in the selected Nextflow log.",
+			"The run may have failed before task evidence was emitted, or this log format is unsupported.",
+			"complete task/resource/status data is unavailable without a Nextflow trace file.",
+		}
+		if searchedPatterns != "" {
+			missingDetail = append(missingDetail, "Searched patterns: "+searchedPatterns)
+		}
+
+		diagnostics = append(diagnostics, domain.Diagnostic{
+			Severity: domain.DiagnosticError,
+			Code:     "log_only_no_parseable_evidence",
+			Message:  "No parseable task evidence found in selected Nextflow log",
+			Detail:   strings.Join(missingDetail, "\n"),
+		})
+	}
+
+	hasTraceRecommendation := false
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Code == "nextflow_with_trace_recommended" {
+			hasTraceRecommendation = true
+			break
+		}
+	}
+	if !hasTraceRecommendation {
+		diagnostics = append(diagnostics, domain.NextflowTraceRecommendationDiagnostic())
+	}
+
+	return domain.StatusSummary{
+		RunDir:          runDir,
+		Mode:            domain.IndexModeLogOnly,
+		Freshness:       domain.IndexFreshnessUnsupported,
+		Sources:         artifacts,
+		Counts:          counts,
+		FailedCount:     failedCount,
+		FailedPreview:   []domain.FailedTaskPreview{},
+		LogOnlyFailures: logOnlyFailures,
+		LogOnlyEvidence: logOnlyEvidence,
+		Diagnostics:     diagnostics,
+	}, nil
+}
+
+func ExtractFailureBlocks(reader io.Reader) ([]FailureBlock, error) {
+	text, err := readNormalizedLogText(reader, "extract failure blocks")
+	if err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(text) == "" {
 		return []FailureBlock{}, nil
 	}
@@ -147,26 +829,6 @@ func ExtractFailureBlocks(reader io.Reader) ([]FailureBlock, error) {
 			}
 		}
 		return ""
-	}
-
-	splitProcessLabel := func(label string) (string, string) {
-		label = strings.TrimSpace(label)
-		if label == "" {
-			return "", ""
-		}
-
-		if strings.HasSuffix(label, ")") {
-			open := strings.LastIndex(label, " (")
-			if open > 0 && open < len(label)-1 {
-				process := strings.TrimSpace(label[:open])
-				name := strings.TrimSpace(label[open+2 : len(label)-1])
-				if process != "" && name != "" && !strings.ContainsAny(name, "()") {
-					return process, name
-				}
-			}
-		}
-
-		return label, ""
 	}
 
 	extractWorkdir := func(blockLines []string) string {
@@ -584,15 +1246,8 @@ func BuildLogOnlyStatus(runDir domain.RunDir, artifacts domain.ArtifactSet, fail
 	logOnlyFailures := make([]domain.LogOnlyFailure, len(failures))
 	copy(logOnlyFailures, failures)
 
-	selectedLog := "selected Nextflow log"
-	if artifacts.Log != nil && artifacts.Log.Path != "" {
-		selectedLog = artifacts.Log.Path
-	}
-
-	searchedPatterns := ""
-	if len(artifacts.SearchedPatterns) > 0 {
-		searchedPatterns = strings.Join(artifacts.SearchedPatterns, ", ")
-	}
+	selectedLog := selectedLogPath(artifacts)
+	searchedPatterns := searchedPatternsText(artifacts)
 
 	degradedDetail := []string{
 		"Selected log: " + selectedLog,
@@ -629,12 +1284,7 @@ func BuildLogOnlyStatus(runDir domain.RunDir, artifacts domain.ArtifactSet, fail
 				Message:  "No parseable task failure evidence found in selected Nextflow log",
 				Detail:   strings.Join(missingDetail, "\n"),
 			},
-			domain.Diagnostic{
-				Severity: domain.DiagnosticInfo,
-				Code:     "nextflow_with_trace_recommended",
-				Message:  "Run future Nextflow workflows with -with-trace",
-				Detail:   "Use `nextflow run ... -with-trace` for future runs so gosh can build a complete trace-backed task index.",
-			},
+			domain.NextflowTraceRecommendationDiagnostic(),
 		)
 	}
 

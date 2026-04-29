@@ -168,108 +168,131 @@ func SelectFailedPreview(failedTasks []domain.Task, limit int) []domain.FailedTa
 	return previews
 }
 
-func ResolveSelector(selector string, taskList []domain.Task) (domain.SelectorResolution, error) {
+type selectorMatchRule[T any] struct {
+	match           func(string, T) bool
+	exactDetail     string
+	ambiguousDetail func(int) string
+}
+
+func resolveSelectorByRules[T any, R any](
+	selector string,
+	items []T,
+	rules []selectorMatchRule[T],
+	exact func(string, T, string) R,
+	ambiguous func(string, []T, string) R,
+	notFound func(string) R,
+) R {
 	normalizedSelector := strings.TrimSpace(selector)
 
-	exactResolution := func(task domain.Task, detail string) domain.SelectorResolution {
-		matchedTask := task
-		return domain.SelectorResolution{
-			Kind:     domain.SelectorResolutionExact,
-			Selector: normalizedSelector,
-			Task:     &matchedTask,
-			Matches:  []domain.Task{},
-			Diagnostics: []domain.Diagnostic{
-				{
-					Severity: domain.DiagnosticInfo,
-					Code:     "selector_exact",
-					Message:  "selector resolved exactly",
-					Detail:   detail,
-				},
-			},
+	for _, rule := range rules {
+		matches := make([]T, 0, 1)
+		for _, item := range items {
+			if rule.match(normalizedSelector, item) {
+				matches = append(matches, item)
+			}
 		}
-	}
 
-	ambiguousResolution := func(matches []domain.Task, detail string) domain.SelectorResolution {
-		return domain.SelectorResolution{
-			Kind:     domain.SelectorResolutionAmbiguous,
-			Selector: normalizedSelector,
-			Matches:  matches,
-			Diagnostics: []domain.Diagnostic{
-				{
-					Severity: domain.DiagnosticWarning,
-					Code:     "selector_ambiguous",
-					Message:  "selector matched more than one task",
-					Detail:   detail,
-				},
-			},
-		}
-	}
-
-	resolveExactMatches := func(matches []domain.Task, exactDetail string, ambiguousDetail string) (domain.SelectorResolution, bool) {
 		if len(matches) == 1 {
-			return exactResolution(matches[0], exactDetail), true
+			return exact(normalizedSelector, matches[0], rule.exactDetail)
 		}
 		if len(matches) > 1 {
-			return ambiguousResolution(matches, ambiguousDetail), true
-		}
-		return domain.SelectorResolution{}, false
-	}
-
-	canonicalMatches := make([]domain.Task, 0, 1)
-	for _, task := range taskList {
-		if MatchCanonicalID(normalizedSelector, task) {
-			canonicalMatches = append(canonicalMatches, task)
+			return ambiguous(normalizedSelector, matches, rule.ambiguousDetail(len(matches)))
 		}
 	}
-	if resolution, ok := resolveExactMatches(
-		canonicalMatches,
-		"matched canonical id",
-		fmt.Sprintf("%d tasks matched canonical id; use a full workdir path if available", len(canonicalMatches)),
-	); ok {
-		return resolution, nil
-	}
 
-	workdirMatches := make([]domain.Task, 0, 1)
-	for _, task := range taskList {
-		if MatchWorkdirPath(normalizedSelector, task) {
-			workdirMatches = append(workdirMatches, task)
-		}
-	}
-	if resolution, ok := resolveExactMatches(
-		workdirMatches,
-		"matched full workdir path",
-		fmt.Sprintf("%d tasks matched full workdir path; use a canonical id if available", len(workdirMatches)),
-	); ok {
-		return resolution, nil
-	}
+	return notFound(normalizedSelector)
+}
 
-	humanMatches := make([]domain.Task, 0)
-	for _, task := range taskList {
-		if MatchHumanSelector(normalizedSelector, task) {
-			humanMatches = append(humanMatches, task)
-		}
-	}
-	if resolution, ok := resolveExactMatches(
-		humanMatches,
-		"matched process/name/tag",
-		fmt.Sprintf("%d tasks matched process/name/tag; use a canonical id or full workdir path", len(humanMatches)),
-	); ok {
-		return resolution, nil
-	}
-
-	return domain.SelectorResolution{
-		Kind:     domain.SelectorResolutionNotFound,
-		Selector: normalizedSelector,
-		Matches:  []domain.Task{},
-		Diagnostics: []domain.Diagnostic{
-			{
-				Severity: domain.DiagnosticError,
-				Code:     "selector_not_found",
-				Message:  "selector did not match any indexed task",
-				Detail:   "searched canonical id, full workdir path, process, name, and tag",
+func taskSelectorRules() []selectorMatchRule[domain.Task] {
+	return []selectorMatchRule[domain.Task]{
+		{
+			match:       MatchCanonicalID,
+			exactDetail: "matched canonical id",
+			ambiguousDetail: func(count int) string {
+				return fmt.Sprintf("%d tasks matched canonical id; use a full workdir path if available", count)
 			},
 		},
-	}, nil
+		{
+			match:       MatchWorkdirPath,
+			exactDetail: "matched full workdir path",
+			ambiguousDetail: func(count int) string {
+				return fmt.Sprintf("%d tasks matched full workdir path; use a canonical id if available", count)
+			},
+		},
+		{
+			match:       MatchHumanSelector,
+			exactDetail: "matched process/name/tag",
+			ambiguousDetail: func(count int) string {
+				return fmt.Sprintf("%d tasks matched process/name/tag; use a canonical id or full workdir path", count)
+			},
+		},
+	}
+}
+
+func selectorDiagnostic(severity domain.DiagnosticSeverity, code string, message string, detail string) []domain.Diagnostic {
+	return []domain.Diagnostic{
+		{
+			Severity: severity,
+			Code:     code,
+			Message:  message,
+			Detail:   detail,
+		},
+	}
+}
+
+func selectorExactDiagnostic(detail string) []domain.Diagnostic {
+	return selectorDiagnostic(domain.DiagnosticInfo, "selector_exact", "selector resolved exactly", detail)
+}
+
+func selectorAmbiguousDiagnostic(message string, detail string) []domain.Diagnostic {
+	return selectorDiagnostic(domain.DiagnosticWarning, "selector_ambiguous", message, detail)
+}
+
+func selectorNotFoundDiagnostic(message string, detail string) []domain.Diagnostic {
+	return selectorDiagnostic(domain.DiagnosticError, "selector_not_found", message, detail)
+}
+
+func taskExactSelectorResolution(selector string, task domain.Task, detail string) domain.SelectorResolution {
+	matchedTask := task
+	return domain.SelectorResolution{
+		Kind:        domain.SelectorResolutionExact,
+		Selector:    selector,
+		Task:        &matchedTask,
+		Matches:     []domain.Task{},
+		Diagnostics: selectorExactDiagnostic(detail),
+	}
+}
+
+func taskAmbiguousSelectorResolution(selector string, matches []domain.Task, detail string) domain.SelectorResolution {
+	return domain.SelectorResolution{
+		Kind:        domain.SelectorResolutionAmbiguous,
+		Selector:    selector,
+		Matches:     matches,
+		Diagnostics: selectorAmbiguousDiagnostic("selector matched more than one task", detail),
+	}
+}
+
+func taskNotFoundSelectorResolution(selector string) domain.SelectorResolution {
+	return domain.SelectorResolution{
+		Kind:     domain.SelectorResolutionNotFound,
+		Selector: selector,
+		Matches:  []domain.Task{},
+		Diagnostics: selectorNotFoundDiagnostic(
+			"selector did not match any indexed task",
+			"searched canonical id, full workdir path, process, name, and tag",
+		),
+	}
+}
+
+func ResolveSelector(selector string, taskList []domain.Task) (domain.SelectorResolution, error) {
+	return resolveSelectorByRules(
+		selector,
+		taskList,
+		taskSelectorRules(),
+		taskExactSelectorResolution,
+		taskAmbiguousSelectorResolution,
+		taskNotFoundSelectorResolution,
+	), nil
 }
 
 func MatchCanonicalID(selector string, task domain.Task) bool {
@@ -326,25 +349,193 @@ func MatchHumanSelector(selector string, task domain.Task) bool {
 		strings.Contains(strings.ToLower(task.Tag), needle)
 }
 
-func BuildTaskDossier(resolution domain.SelectorResolution, inventory domain.CommandFileInventory) (domain.TaskDossier, error) {
-	diagnostics := append([]domain.Diagnostic(nil), resolution.Diagnostics...)
-	emptyDossier := domain.TaskDossier{Diagnostics: diagnostics}
+type selectorDossierState struct {
+	kind        domain.SelectorResolutionKind
+	selector    string
+	diagnostics []domain.Diagnostic
+	matchCount  int
+}
 
-	switch resolution.Kind {
+func newSelectorDossierState(kind domain.SelectorResolutionKind, selector string, diagnostics []domain.Diagnostic, matchCount int) selectorDossierState {
+	return selectorDossierState{kind: kind, selector: selector, diagnostics: diagnostics, matchCount: matchCount}
+}
+
+func buildSelectorDossier[D any](
+	context string,
+	resolution selectorDossierState,
+	empty func([]domain.Diagnostic) D,
+	exact func([]domain.Diagnostic) (D, error),
+) (D, error) {
+	diagnosticsCopy := append([]domain.Diagnostic(nil), resolution.diagnostics...)
+	emptyDossier := empty(diagnosticsCopy)
+
+	switch resolution.kind {
 	case domain.SelectorResolutionExact:
-		if resolution.Task == nil {
-			return emptyDossier, fmt.Errorf("build task dossier: exact selector %q has no resolved task", resolution.Selector)
+		dossier, err := exact(diagnosticsCopy)
+		if err != nil {
+			return emptyDossier, err
 		}
-		return domain.TaskDossier{
-			Task:        *resolution.Task,
-			Inventory:   inventory,
-			Diagnostics: diagnostics,
-		}, nil
+		return dossier, nil
 	case domain.SelectorResolutionAmbiguous:
-		return emptyDossier, fmt.Errorf("build task dossier: selector %q is ambiguous (%d matches)", resolution.Selector, len(resolution.Matches))
+		return emptyDossier, fmt.Errorf("%s: selector %q is ambiguous (%d matches)", context, resolution.selector, resolution.matchCount)
 	case domain.SelectorResolutionNotFound:
-		return emptyDossier, fmt.Errorf("build task dossier: selector %q not found", resolution.Selector)
+		return emptyDossier, fmt.Errorf("%s: selector %q not found", context, resolution.selector)
 	default:
-		return emptyDossier, fmt.Errorf("build task dossier: unsupported selector resolution kind %q", resolution.Kind)
+		return emptyDossier, fmt.Errorf("%s: unsupported selector resolution kind %q", context, resolution.kind)
 	}
+}
+
+func BuildTaskDossier(resolution domain.SelectorResolution, inventory domain.CommandFileInventory) (domain.TaskDossier, error) {
+	return buildSelectorDossier(
+		"build task dossier",
+		newSelectorDossierState(resolution.Kind, resolution.Selector, resolution.Diagnostics, len(resolution.Matches)),
+		func(diagnostics []domain.Diagnostic) domain.TaskDossier {
+			return domain.TaskDossier{Diagnostics: diagnostics}
+		},
+		func(diagnostics []domain.Diagnostic) (domain.TaskDossier, error) {
+			if resolution.Task == nil {
+				return domain.TaskDossier{}, fmt.Errorf("build task dossier: exact selector %q has no resolved task", resolution.Selector)
+			}
+			return domain.TaskDossier{
+				Task:        *resolution.Task,
+				Inventory:   inventory,
+				Diagnostics: diagnostics,
+			}, nil
+		},
+	)
+}
+
+func logOnlyEvidenceSelectorRules() []selectorMatchRule[domain.LogOnlyTaskEvidence] {
+	return []selectorMatchRule[domain.LogOnlyTaskEvidence]{
+		{
+			match: func(selector string, evidence domain.LogOnlyTaskEvidence) bool {
+				return MatchCanonicalID(selector, domain.Task{ID: evidence.ID})
+			},
+			exactDetail: "matched canonical id",
+			ambiguousDetail: func(count int) string {
+				return fmt.Sprintf("%d log-only evidence rows matched canonical id; use a full workdir path if available", count)
+			},
+		},
+		{
+			match: func(selector string, evidence domain.LogOnlyTaskEvidence) bool {
+				return MatchWorkdirPath(selector, domain.Task{Workdir: evidence.Workdir})
+			},
+			exactDetail: "matched full workdir path",
+			ambiguousDetail: func(count int) string {
+				return fmt.Sprintf("%d log-only evidence rows matched full workdir path; use a canonical id if available", count)
+			},
+		},
+		{
+			match:       MatchLogOnlyEvidenceSelector,
+			exactDetail: "matched log-only evidence",
+			ambiguousDetail: func(count int) string {
+				return fmt.Sprintf("%d log-only evidence rows matched observed log-only fields; use a canonical id or full workdir path if available", count)
+			},
+		},
+	}
+}
+
+func logOnlyExactSelectorResolution(selector string, evidence domain.LogOnlyTaskEvidence, detail string) domain.LogOnlySelectorResolution {
+	matchedEvidence := evidence
+	return domain.LogOnlySelectorResolution{
+		Kind:        domain.SelectorResolutionExact,
+		Selector:    selector,
+		Evidence:    &matchedEvidence,
+		Matches:     []domain.LogOnlyTaskEvidence{},
+		Diagnostics: selectorExactDiagnostic(detail),
+	}
+}
+
+func logOnlyAmbiguousSelectorResolution(selector string, matches []domain.LogOnlyTaskEvidence, detail string) domain.LogOnlySelectorResolution {
+	return domain.LogOnlySelectorResolution{
+		Kind:        domain.SelectorResolutionAmbiguous,
+		Selector:    selector,
+		Matches:     matches,
+		Diagnostics: selectorAmbiguousDiagnostic("selector matched more than one log-only evidence row", detail),
+	}
+}
+
+func logOnlyNotFoundSelectorResolution(selector string) domain.LogOnlySelectorResolution {
+	return domain.LogOnlySelectorResolution{
+		Kind:     domain.SelectorResolutionNotFound,
+		Selector: selector,
+		Matches:  []domain.LogOnlyTaskEvidence{},
+		Diagnostics: selectorNotFoundDiagnostic(
+			"selector did not match any log-only evidence",
+			"searched observed canonical id, full workdir path, process, name, and display label",
+		),
+	}
+}
+
+func ResolveLogOnlySelector(selector string, evidence []domain.LogOnlyTaskEvidence) (domain.LogOnlySelectorResolution, error) {
+	return resolveSelectorByRules(
+		selector,
+		evidence,
+		logOnlyEvidenceSelectorRules(),
+		logOnlyExactSelectorResolution,
+		logOnlyAmbiguousSelectorResolution,
+		logOnlyNotFoundSelectorResolution,
+	), nil
+}
+
+func MatchLogOnlyEvidenceSelector(selector string, evidence domain.LogOnlyTaskEvidence) bool {
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return false
+	}
+
+	if MatchCanonicalID(selector, domain.Task{ID: evidence.ID}) {
+		return true
+	}
+	if MatchWorkdirPath(selector, domain.Task{Workdir: evidence.Workdir}) {
+		return true
+	}
+
+	needle := strings.ToLower(selector)
+	containsSelector := func(value string) bool {
+		value = strings.TrimSpace(value)
+		return value != "" && strings.Contains(strings.ToLower(value), needle)
+	}
+	if containsSelector(evidence.Process) || containsSelector(evidence.Name) {
+		return true
+	}
+
+	process := strings.Join(strings.Fields(evidence.Process), " ")
+	name := strings.Join(strings.Fields(evidence.Name), " ")
+	if process == "" || name == "" {
+		return false
+	}
+
+	displayStrings := []string{
+		process + " (" + name + ")",
+		process + "/" + name,
+		process + " " + name,
+	}
+	for _, display := range displayStrings {
+		if strings.Contains(strings.ToLower(display), needle) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func BuildLogOnlyTaskDossier(resolution domain.LogOnlySelectorResolution, inventory domain.CommandFileInventory) (domain.LogOnlyTaskDossier, error) {
+	return buildSelectorDossier(
+		"build log-only task dossier",
+		newSelectorDossierState(resolution.Kind, resolution.Selector, resolution.Diagnostics, len(resolution.Matches)),
+		func(diagnostics []domain.Diagnostic) domain.LogOnlyTaskDossier {
+			return domain.LogOnlyTaskDossier{Diagnostics: diagnostics}
+		},
+		func(diagnostics []domain.Diagnostic) (domain.LogOnlyTaskDossier, error) {
+			if resolution.Evidence == nil {
+				return domain.LogOnlyTaskDossier{}, fmt.Errorf("build log-only task dossier: exact selector %q has no resolved evidence", resolution.Selector)
+			}
+			return domain.LogOnlyTaskDossier{
+				Evidence:    *resolution.Evidence,
+				Inventory:   inventory,
+				Diagnostics: diagnostics,
+			}, nil
+		},
+	)
 }

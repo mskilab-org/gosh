@@ -2,7 +2,9 @@ package render
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,228 @@ type failingWriter struct {
 
 func (w failingWriter) Write([]byte) (int, error) {
 	return 0, w.err
+}
+
+func TestBuildDiagnosticBlocksEmptyInput(t *testing.T) {
+	if got := BuildDiagnosticBlocks(nil); len(got) != 0 {
+		t.Fatalf("BuildDiagnosticBlocks(nil) length = %d, want 0", len(got))
+	}
+	if got := BuildDiagnosticBlocks([]domain.Diagnostic{}); len(got) != 0 {
+		t.Fatalf("BuildDiagnosticBlocks(empty) length = %d, want 0", len(got))
+	}
+}
+
+func TestBuildDiagnosticBlocksParsesContextDetailsAndHints(t *testing.T) {
+	diagnostics := []domain.Diagnostic{
+		{
+			Severity: domain.DiagnosticWarning,
+			Code:     "log_only_degraded",
+			Message:  "complete task/resource/status data is unavailable without a Nextflow trace file",
+			Detail: strings.Join([]string{
+				"Selected log: /runs/example/.nextflow.log",
+				"Observed log-only evidence rows: 2",
+				"Complete task counts require a trace file.",
+				"",
+				"Use `nextflow run ... -with-trace` for future runs.",
+			}, "\r\n"),
+		},
+	}
+
+	got := BuildDiagnosticBlocks(diagnostics)
+	want := []domain.DiagnosticBlock{
+		{
+			Severity: domain.DiagnosticWarning,
+			Code:     "log_only_degraded",
+			Title:    "complete task/resource/status data is unavailable without a Nextflow trace file",
+			Context: []domain.DiagnosticContextLine{
+				{Label: "Selected log", Value: "/runs/example/.nextflow.log"},
+				{Label: "Observed log-only evidence rows", Value: "2"},
+			},
+			Details: []string{"Complete task counts require a trace file."},
+			Hints:   []string{"Use `nextflow run ... -with-trace` for future runs."},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("BuildDiagnosticBlocks() = %#v, want %#v", got, want)
+	}
+}
+
+func TestBuildDiagnosticBlocksOrdersBySeverityAndGroupsRecommendationHints(t *testing.T) {
+	diagnostics := []domain.Diagnostic{
+		{
+			Severity: domain.DiagnosticInfo,
+			Code:     "nextflow_with_trace_recommended",
+			Message:  "Run future Nextflow workflows with -with-trace",
+			Detail:   "Use `nextflow run ... -with-trace` for future runs so gosh can build a complete trace-backed task index.",
+		},
+		{
+			Severity: domain.DiagnosticWarning,
+			Code:     "index_stale",
+			Message:  "index is stale",
+			Detail:   "Refresh with `gosh index --refresh`.",
+		},
+		{
+			Severity: domain.DiagnosticError,
+			Code:     "unsupported_artifacts",
+			Message:  "No supported Nextflow trace or log artifacts found",
+			Detail:   "Searched trace patterns: trace*.txt\nSearched log patterns: .nextflow.log",
+		},
+	}
+
+	got := BuildDiagnosticBlocks(diagnostics)
+	want := []domain.DiagnosticBlock{
+		{
+			Severity: domain.DiagnosticError,
+			Code:     "unsupported_artifacts",
+			Title:    "No supported Nextflow trace or log artifacts found",
+			Context: []domain.DiagnosticContextLine{
+				{Label: "Searched trace patterns", Value: "trace*.txt"},
+				{Label: "Searched log patterns", Value: ".nextflow.log"},
+			},
+			Hints: []string{"Use `nextflow run ... -with-trace` for future runs so gosh can build a complete trace-backed task index."},
+		},
+		{
+			Severity: domain.DiagnosticWarning,
+			Code:     "index_stale",
+			Title:    "index is stale",
+			Hints:    []string{"Refresh with `gosh index --refresh`."},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("BuildDiagnosticBlocks() = %#v, want %#v", got, want)
+	}
+}
+
+func TestBuildDiagnosticBlocksFallsBackToCodeTitleAndDoesNotMutateDiagnostics(t *testing.T) {
+	diagnostics := []domain.Diagnostic{
+		{
+			Severity: domain.DiagnosticError,
+			Code:     "selector_not_found",
+			Detail:   "Try `gosh tasks` to list available task IDs.",
+		},
+	}
+	original := append([]domain.Diagnostic(nil), diagnostics...)
+
+	got := BuildDiagnosticBlocks(diagnostics)
+	want := []domain.DiagnosticBlock{
+		{
+			Severity: domain.DiagnosticError,
+			Code:     "selector_not_found",
+			Title:    "selector_not_found",
+			Hints:    []string{"Try `gosh tasks` to list available task IDs."},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("BuildDiagnosticBlocks() = %#v, want %#v", got, want)
+	}
+	if !reflect.DeepEqual(diagnostics, original) {
+		t.Fatalf("BuildDiagnosticBlocks() mutated diagnostics to %#v, want %#v", diagnostics, original)
+	}
+}
+
+func TestRenderDiagnosticBlocksHumanRendersSeverityBlocksContextDetailsAndHints(t *testing.T) {
+	blocks := []domain.DiagnosticBlock{
+		{
+			Severity: domain.DiagnosticError,
+			Code:     "unsupported_artifacts",
+			Title:    "No supported Nextflow trace or log artifacts found",
+			Context: []domain.DiagnosticContextLine{
+				{Label: "Searched trace patterns", Value: "trace*.txt"},
+				{Label: "Searched log patterns", Value: ".nextflow.log"},
+			},
+			Details: []string{"Complete task counts require a trace file."},
+			Hints:   []string{"Use `nextflow run ... -with-trace` for future runs."},
+		},
+		{
+			Severity: domain.DiagnosticWarning,
+			Code:     "index_stale",
+			Title:    "index is stale",
+			Hints:    []string{"Refresh with `gosh index --refresh`."},
+		},
+		{
+			Severity: domain.DiagnosticInfo,
+			Code:     "selected_trace",
+			Title:    "selected newest trace",
+			Context:  []domain.DiagnosticContextLine{{Label: "trace", Value: "/runs/example/trace.txt"}},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderDiagnosticBlocksHuman(&buf, blocks); err != nil {
+		t.Fatalf("RenderDiagnosticBlocksHuman() error = %v, want nil", err)
+	}
+
+	want := strings.Join([]string{
+		"error: No supported Nextflow trace or log artifacts found",
+		"  code: unsupported_artifacts",
+		"  Searched trace patterns: trace*.txt",
+		"  Searched log patterns: .nextflow.log",
+		"  Complete task counts require a trace file.",
+		"hint: Use `nextflow run ... -with-trace` for future runs.",
+		"",
+		"warning: index is stale",
+		"  code: index_stale",
+		"hint: Refresh with `gosh index --refresh`.",
+		"",
+		"info: selected newest trace",
+		"  code: selected_trace",
+		"  trace: /runs/example/trace.txt",
+		"",
+	}, "\n")
+	if got := buf.String(); got != want {
+		t.Fatalf("RenderDiagnosticBlocksHuman() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestRenderDiagnosticBlocksHumanEmptyInputWritesNothing(t *testing.T) {
+	var buf bytes.Buffer
+	if err := RenderDiagnosticBlocksHuman(&buf, nil); err != nil {
+		t.Fatalf("RenderDiagnosticBlocksHuman(nil) error = %v, want nil", err)
+	}
+	if got := buf.String(); got != "" {
+		t.Fatalf("RenderDiagnosticBlocksHuman(nil) = %q, want empty output", got)
+	}
+
+	if err := RenderDiagnosticBlocksHuman(&buf, []domain.DiagnosticBlock{}); err != nil {
+		t.Fatalf("RenderDiagnosticBlocksHuman(empty) error = %v, want nil", err)
+	}
+	if got := buf.String(); got != "" {
+		t.Fatalf("RenderDiagnosticBlocksHuman(empty) = %q, want empty output", got)
+	}
+}
+
+func TestRenderDiagnosticBlocksHumanFallsBackToCodeTitleWithoutDuplicateCodeLine(t *testing.T) {
+	blocks := []domain.DiagnosticBlock{{Severity: domain.DiagnosticInfo, Code: "selector_not_found"}}
+
+	var buf bytes.Buffer
+	if err := RenderDiagnosticBlocksHuman(&buf, blocks); err != nil {
+		t.Fatalf("RenderDiagnosticBlocksHuman() error = %v, want nil", err)
+	}
+
+	want := "info: selector_not_found\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("RenderDiagnosticBlocksHuman() = %q, want %q", got, want)
+	}
+}
+
+func TestRenderDiagnosticBlocksHumanNilWriter(t *testing.T) {
+	err := RenderDiagnosticBlocksHuman(nil, nil)
+	if err == nil {
+		t.Fatal("RenderDiagnosticBlocksHuman() error = nil, want nil writer error")
+	}
+	if !strings.Contains(err.Error(), "nil writer") {
+		t.Fatalf("RenderDiagnosticBlocksHuman() error = %v, want nil writer message", err)
+	}
+}
+
+func TestRenderDiagnosticBlocksHumanReturnsWriterError(t *testing.T) {
+	wantErr := errors.New("write failed")
+	err := RenderDiagnosticBlocksHuman(failingWriter{err: wantErr}, []domain.DiagnosticBlock{
+		{Severity: domain.DiagnosticError, Title: "No supported artifacts"},
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("RenderDiagnosticBlocksHuman() error = %v, want wrapping %v", err, wantErr)
+	}
 }
 
 func TestRenderStatusHumanTraceBackedSummaryDeterministic(t *testing.T) {
@@ -125,7 +349,57 @@ func TestRenderStatusHumanTraceBackedNoFailures(t *testing.T) {
 	}
 }
 
-func TestRenderStatusHumanLogOnlyIncludesEvidenceAndDiagnostics(t *testing.T) {
+func TestRenderStatusHumanTraceBackedDiagnosticsUseGitStyleBlocks(t *testing.T) {
+	view := domain.StatusView{
+		Summary: domain.StatusSummary{
+			RunDir:      domain.RunDir{Path: "/runs/stale"},
+			Mode:        domain.IndexModeTraceBacked,
+			IndexPath:   "/runs/stale/.gosh/index.sqlite",
+			Freshness:   domain.IndexFreshnessStale,
+			FailedCount: 0,
+			Diagnostics: []domain.Diagnostic{
+				{
+					Severity: domain.DiagnosticWarning,
+					Code:     "index_stale",
+					Message:  "index is stale",
+					Detail:   "Index path: /runs/stale/.gosh/index.sqlite\nRefresh with `gosh index --refresh`.",
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderStatusHuman(&buf, view); err != nil {
+		t.Fatalf("RenderStatusHuman() error = %v, want nil", err)
+	}
+
+	want := strings.Join([]string{
+		"run_dir: /runs/stale",
+		"mode: trace-backed",
+		"index: /runs/stale/.gosh/index.sqlite",
+		"freshness: stale",
+		"sources:",
+		"  trace: none",
+		"  log: none",
+		"counts: none",
+		"failed_count: 0",
+		"failed_preview: none",
+		"",
+		"warning: index is stale",
+		"  code: index_stale",
+		"  Index path: /runs/stale/.gosh/index.sqlite",
+		"hint: Refresh with `gosh index --refresh`.",
+		"",
+	}, "\n")
+	if got := buf.String(); got != want {
+		t.Fatalf("RenderStatusHuman() =\n%s\nwant\n%s", got, want)
+	}
+	if strings.Contains(buf.String(), "diagnostics:") {
+		t.Fatalf("RenderStatusHuman() output = %q, did not want nested diagnostics heading", buf.String())
+	}
+}
+
+func TestRenderStatusHumanLogOnlyIncludesEvidenceAndGitStyleDiagnostics(t *testing.T) {
 	logMod := time.Date(2024, 4, 28, 14, 0, 0, 0, time.UTC)
 	exit := 2
 	view := domain.StatusView{
@@ -137,15 +411,29 @@ func TestRenderStatusHumanLogOnlyIncludesEvidenceAndDiagnostics(t *testing.T) {
 				Log:              &domain.SourceFingerprint{Kind: domain.SourceKindLog, Path: "/runs/log-only/.nextflow.log", ModTime: logMod, Size: 900},
 				SearchedPatterns: []string{"trace*.txt", "trace*.csv", ".nextflow*.log"},
 			},
+			Counts: []domain.StatusCount{
+				{Status: domain.TaskStatusCompleted, Count: 1},
+				{Status: domain.TaskStatusFailed, Count: 1},
+			},
 			FailedCount: 1,
-			LogOnlyFailures: []domain.LogOnlyFailure{
+			LogOnlyEvidence: []domain.LogOnlyTaskEvidence{
 				{
-					ID:           "bb/222222",
-					Process:      "PIPE:CALL",
-					Name:         "tumor-02",
-					Workdir:      "/runs/log-only/work/bb/222222",
-					Exit:         &exit,
-					ErrorSummary: "No such file or directory",
+					ID:             "aa/111111",
+					Process:        "PIPE:QC",
+					Name:           "normal-01",
+					ObservedStatus: domain.TaskStatusCompleted,
+					Completeness:   domain.LogOnlyEvidencePartial,
+				},
+				{
+					ID:                    "bb/222222",
+					Process:               "PIPE:CALL",
+					Name:                  "tumor-02",
+					Workdir:               "/runs/log-only/work/bb/222222",
+					ObservedStatus:        domain.TaskStatusFailed,
+					Exit:                  &exit,
+					ErrorSummary:          "No such file or directory",
+					Completeness:          domain.LogOnlyEvidencePartial,
+					CommandFilesAvailable: true,
 				},
 			},
 			Diagnostics: []domain.Diagnostic{
@@ -154,6 +442,11 @@ func TestRenderStatusHumanLogOnlyIncludesEvidenceAndDiagnostics(t *testing.T) {
 					Code:     "log_only_degraded",
 					Message:  "log-only status is degraded; complete task/resource/status data is unavailable",
 					Detail:   "Selected log: /runs/log-only/.nextflow.log\nComplete task counts require a trace file.",
+				},
+				{
+					Severity: domain.DiagnosticInfo,
+					Code:     "nextflow_with_trace_recommended",
+					Message:  "Run future Nextflow workflows with -with-trace",
 				},
 			},
 		},
@@ -172,18 +465,27 @@ func TestRenderStatusHumanLogOnlyIncludesEvidenceAndDiagnostics(t *testing.T) {
 		"  trace: none",
 		"  log: /runs/log-only/.nextflow.log (mtime=2024-04-28T14:00:00Z size=900)",
 		"  searched_patterns: trace*.txt, trace*.csv, .nextflow*.log",
-		"counts: unavailable (log-only mode; trace file required)",
+		"counts: incomplete (log-only evidence; trace file required)",
+		"observed_counts:",
+		"  COMPLETED: 1",
+		"  FAILED: 1",
 		"failed_count: 1",
-		"log_only_failures:",
-		"  - id=bb/222222 process=PIPE:CALL name=tumor-02 workdir=/runs/log-only/work/bb/222222 exit=2 error=No such file or directory",
-		"diagnostics:",
-		"  - warning log_only_degraded: log-only status is degraded; complete task/resource/status data is unavailable",
-		"    detail: Selected log: /runs/log-only/.nextflow.log",
-		"    detail: Complete task counts require a trace file.",
+		"log_only_evidence:",
+		"  - id=aa/111111 status=COMPLETED process=PIPE:QC name=normal-01 workdir=- exit=- completeness=partial command_files_available=false error=-",
+		"  - id=bb/222222 status=FAILED process=PIPE:CALL name=tumor-02 workdir=/runs/log-only/work/bb/222222 exit=2 completeness=partial command_files_available=true error=No such file or directory",
+		"",
+		"warning: log-only status is degraded; complete task/resource/status data is unavailable",
+		"  code: log_only_degraded",
+		"  Selected log: /runs/log-only/.nextflow.log",
+		"  Complete task counts require a trace file.",
+		"hint: Run future Nextflow workflows with -with-trace",
 		"",
 	}, "\n")
 	if got := buf.String(); got != want {
 		t.Fatalf("RenderStatusHuman() =\n%s\nwant\n%s", got, want)
+	}
+	if strings.Contains(buf.String(), "diagnostics:") {
+		t.Fatalf("RenderStatusHuman() output = %q, did not want nested diagnostics heading", buf.String())
 	}
 }
 
@@ -302,6 +604,7 @@ func TestRenderStatusJSONTraceBackedSummaryStable(t *testing.T) {
 		`      }`,
 		`    ],`,
 		`    "log_only_failures": [],`,
+		`    "log_only_evidence": [],`,
 		`    "diagnostics": [`,
 		`      {`,
 		`        "severity": "warning",`,
@@ -402,6 +705,7 @@ func TestRenderStatusJSONLogOnlyIncludesFailureEvidenceAndEmptyArrays(t *testing
 		`        "error_block": "ERROR ~ Process PIPE:CALL (tumor-02) failed"`,
 		`      }`,
 		`    ],`,
+		`    "log_only_evidence": [],`,
 		`    "diagnostics": [`,
 		`      {`,
 		`        "severity": "warning",`,
@@ -419,7 +723,178 @@ func TestRenderStatusJSONLogOnlyIncludesFailureEvidenceAndEmptyArrays(t *testing
 	}
 }
 
-func TestRenderIndexHumanTraceBackedDiagnosticsDeterministic(t *testing.T) {
+func TestRenderStatusJSONLogOnlyIncludesObservedEvidenceAndPreservesDiagnostics(t *testing.T) {
+	logMod := time.Date(2024, 4, 28, 14, 0, 0, 0, time.UTC)
+	exit := 2
+	logPath := "/runs/log-only/.nextflow.log"
+	view := domain.StatusView{
+		Summary: domain.StatusSummary{
+			RunDir:    domain.RunDir{Path: "/runs/log-only"},
+			Mode:      domain.IndexModeLogOnly,
+			Freshness: domain.IndexFreshnessUnsupported,
+			Sources: domain.ArtifactSet{
+				RunDir: domain.RunDir{Path: "/runs/log-only"},
+				Mode:   domain.IndexModeLogOnly,
+				Log:    &domain.SourceFingerprint{Kind: domain.SourceKindLog, Path: logPath, ModTime: logMod, Size: 900},
+				Diagnostics: []domain.Diagnostic{
+					{Severity: domain.DiagnosticInfo, Code: "selected_log", Message: "selected newest Nextflow log", Detail: "log source detail"},
+				},
+			},
+			Counts: []domain.StatusCount{
+				{Status: domain.TaskStatusFailed, Count: 1},
+				{Status: domain.TaskStatusCompleted, Count: 1},
+			},
+			FailedCount: 1,
+			LogOnlyEvidence: []domain.LogOnlyTaskEvidence{
+				{
+					ID:             "aa/111111",
+					Process:        "PIPE:QC",
+					Name:           "normal-01",
+					ObservedStatus: domain.TaskStatusCompleted,
+					Sources: []domain.LogOnlyEvidenceSource{
+						{Kind: domain.LogOnlyEvidenceSourceLog, Path: logPath, Detail: "lifecycle line"},
+					},
+					Completeness: domain.LogOnlyEvidencePartial,
+				},
+				{
+					ID:             "bb/222222",
+					Workdir:        "/runs/log-only/work/bb/222222",
+					Process:        "PIPE:CALL",
+					Name:           "tumor-02",
+					ObservedStatus: domain.TaskStatusFailed,
+					Exit:           &exit,
+					ErrorSummary:   "No such file or directory",
+					ErrorBlock:     "ERROR ~ Process PIPE:CALL (tumor-02) failed",
+					Sources: []domain.LogOnlyEvidenceSource{
+						{Kind: domain.LogOnlyEvidenceSourceLog, Path: logPath, Detail: "failure block"},
+						{Kind: domain.LogOnlyEvidenceSourceCommand, Path: "/runs/log-only/work/bb/222222/.command.err", Detail: "stderr snippet"},
+					},
+					Completeness:          domain.LogOnlyEvidencePartial,
+					CommandFilesAvailable: true,
+				},
+			},
+			Diagnostics: []domain.Diagnostic{
+				{
+					Severity: domain.DiagnosticWarning,
+					Code:     "log_only_degraded",
+					Message:  "log-only status is degraded; complete task/resource/status data is unavailable",
+					Detail:   "Selected log: /runs/log-only/.nextflow.log\nComplete task counts require a trace file.",
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderStatusJSON(&buf, view); err != nil {
+		t.Fatalf("RenderStatusJSON() error = %v, want nil", err)
+	}
+
+	want := strings.Join([]string{
+		"{",
+		`  "format": "json",`,
+		`  "summary": {`,
+		`    "run_dir": "/runs/log-only",`,
+		`    "mode": "log-only",`,
+		`    "index_path": "",`,
+		`    "freshness": "unsupported",`,
+		`    "built_at": null,`,
+		`    "sources": {`,
+		`      "run_dir": "/runs/log-only",`,
+		`      "mode": "log-only",`,
+		`      "trace": null,`,
+		`      "log": {`,
+		`        "kind": "log",`,
+		`        "path": "/runs/log-only/.nextflow.log",`,
+		`        "mod_time": "2024-04-28T14:00:00Z",`,
+		`        "size": 900`,
+		`      },`,
+		`      "selected_at": null,`,
+		`      "searched_patterns": [],`,
+		`      "diagnostics": [`,
+		`        {`,
+		`          "severity": "info",`,
+		`          "code": "selected_log",`,
+		`          "message": "selected newest Nextflow log",`,
+		`          "detail": "log source detail"`,
+		`        }`,
+		`      ]`,
+		`    },`,
+		`    "counts": [`,
+		`      {`,
+		`        "status": "COMPLETED",`,
+		`        "count": 1`,
+		`      },`,
+		`      {`,
+		`        "status": "FAILED",`,
+		`        "count": 1`,
+		`      }`,
+		`    ],`,
+		`    "failed_count": 1,`,
+		`    "failed_preview": [],`,
+		`    "log_only_failures": [],`,
+		`    "log_only_evidence": [`,
+		`      {`,
+		`        "id": "aa/111111",`,
+		`        "workdir": "",`,
+		`        "process": "PIPE:QC",`,
+		`        "name": "normal-01",`,
+		`        "observed_status": "COMPLETED",`,
+		`        "exit": null,`,
+		`        "error_summary": "",`,
+		`        "error_block": "",`,
+		`        "sources": [`,
+		`          {`,
+		`            "kind": "log",`,
+		`            "path": "/runs/log-only/.nextflow.log",`,
+		`            "detail": "lifecycle line"`,
+		`          }`,
+		`        ],`,
+		`        "completeness": "partial",`,
+		`        "command_files_available": false`,
+		`      },`,
+		`      {`,
+		`        "id": "bb/222222",`,
+		`        "workdir": "/runs/log-only/work/bb/222222",`,
+		`        "process": "PIPE:CALL",`,
+		`        "name": "tumor-02",`,
+		`        "observed_status": "FAILED",`,
+		`        "exit": 2,`,
+		`        "error_summary": "No such file or directory",`,
+		`        "error_block": "ERROR ~ Process PIPE:CALL (tumor-02) failed",`,
+		`        "sources": [`,
+		`          {`,
+		`            "kind": "log",`,
+		`            "path": "/runs/log-only/.nextflow.log",`,
+		`            "detail": "failure block"`,
+		`          },`,
+		`          {`,
+		`            "kind": "command-file",`,
+		`            "path": "/runs/log-only/work/bb/222222/.command.err",`,
+		`            "detail": "stderr snippet"`,
+		`          }`,
+		`        ],`,
+		`        "completeness": "partial",`,
+		`        "command_files_available": true`,
+		`      }`,
+		`    ],`,
+		`    "diagnostics": [`,
+		`      {`,
+		`        "severity": "warning",`,
+		`        "code": "log_only_degraded",`,
+		`        "message": "log-only status is degraded; complete task/resource/status data is unavailable",`,
+		`        "detail": "Selected log: /runs/log-only/.nextflow.log\nComplete task counts require a trace file."`,
+		`      }`,
+		`    ]`,
+		`  }`,
+		"}",
+		"",
+	}, "\n")
+	if got := buf.String(); got != want {
+		t.Fatalf("RenderStatusJSON() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestRenderIndexHumanShowsSearchLocationsAndSeveritySortedDiagnostics(t *testing.T) {
 	builtAt := time.Date(2024, 4, 28, 12, 34, 56, 0, time.UTC)
 	traceMod := time.Date(2024, 4, 28, 12, 0, 0, 0, time.UTC)
 	logMod := time.Date(2024, 4, 28, 12, 1, 0, 0, time.UTC)
@@ -432,6 +907,11 @@ func TestRenderIndexHumanTraceBackedDiagnosticsDeterministic(t *testing.T) {
 				Trace:            &domain.SourceFingerprint{Kind: domain.SourceKindTrace, Path: "/runs/example/trace.txt", ModTime: traceMod, Size: 1200},
 				Log:              &domain.SourceFingerprint{Kind: domain.SourceKindLog, Path: "/runs/example/.nextflow.log", ModTime: logMod, Size: 3400},
 				SearchedPatterns: []string{"trace*.txt", ".nextflow.log"},
+				SearchLocations: []domain.ArtifactSearchLocation{
+					{Kind: domain.SourceKindTrace, BaseDir: "/runs/example", Patterns: []string{"trace*.txt", "trace*.csv"}, Description: "run directory trace files"},
+					{Kind: domain.SourceKindTrace, BaseDir: "/runs/example/results/pipeline_info", Patterns: []string{"execution_trace*.txt"}, Description: "pipeline_info execution trace files"},
+					{Kind: domain.SourceKindLog, BaseDir: "/runs/example", Patterns: []string{".nextflow.log"}, Description: "run directory log files"},
+				},
 				Diagnostics: []domain.Diagnostic{
 					{Severity: domain.DiagnosticInfo, Code: "source_selected", Message: "selected newest trace"},
 				},
@@ -468,15 +948,24 @@ func TestRenderIndexHumanTraceBackedDiagnosticsDeterministic(t *testing.T) {
 		"sources:",
 		"  trace: /runs/example/trace.txt (mtime=2024-04-28T12:00:00Z size=1200)",
 		"  log: /runs/example/.nextflow.log (mtime=2024-04-28T12:01:00Z size=3400)",
-		"  searched_patterns: trace*.txt, .nextflow.log",
-		"diagnostics:",
-		"  - info source_selected: selected newest trace",
-		"  - warning index_stale: index is stale",
-		"    detail: Refresh with `gosh index --refresh`.",
+		"  searched_locations:",
+		"    - trace: /runs/example (run directory trace files; patterns: trace*.txt, trace*.csv)",
+		"    - trace: /runs/example/results/pipeline_info (pipeline_info execution trace files; patterns: execution_trace*.txt)",
+		"    - log: /runs/example (run directory log files; patterns: .nextflow.log)",
+		"",
+		"warning: index is stale",
+		"  code: index_stale",
+		"hint: Refresh with `gosh index --refresh`.",
+		"",
+		"info: selected newest trace",
+		"  code: source_selected",
 		"",
 	}, "\n")
 	if got := buf.String(); got != want {
 		t.Fatalf("RenderIndexHuman() =\n%s\nwant\n%s", got, want)
+	}
+	if strings.Contains(buf.String(), "diagnostics:") {
+		t.Fatalf("RenderIndexHuman() output = %q, did not want nested diagnostics heading", buf.String())
 	}
 }
 
@@ -487,6 +976,14 @@ func TestRenderIndexHumanUnsupportedNoSourcesShowsZeroTaskCount(t *testing.T) {
 			Artifacts: domain.ArtifactSet{
 				RunDir: domain.RunDir{Path: "/runs/empty"},
 				Mode:   domain.IndexModeUnsupported,
+				SearchLocations: []domain.ArtifactSearchLocation{
+					{Kind: domain.SourceKindTrace, BaseDir: "/runs/empty", Patterns: []string{"trace*.txt"}, Description: "run directory trace files"},
+					{Kind: domain.SourceKindTrace, BaseDir: "/runs/empty/results/pipeline_info", Patterns: []string{"execution_trace*.txt"}, Description: "pipeline_info execution trace files"},
+					{Kind: domain.SourceKindLog, BaseDir: "/runs/empty", Patterns: []string{".nextflow.log"}, Description: "run directory log files"},
+				},
+				Diagnostics: []domain.Diagnostic{
+					{Severity: domain.DiagnosticInfo, Code: "nextflow_with_trace_recommended", Message: "Run future Nextflow workflows with -with-trace", Detail: "Use `nextflow run ... -with-trace` for future runs so gosh can build a complete trace-backed task index."},
+				},
 			},
 			Metadata: &domain.IndexMetadata{
 				Mode:        domain.IndexModeUnsupported,
@@ -514,14 +1011,23 @@ func TestRenderIndexHumanUnsupportedNoSourcesShowsZeroTaskCount(t *testing.T) {
 		"sources:",
 		"  trace: none",
 		"  log: none",
-		"diagnostics:",
-		"  - error unsupported_artifacts: No supported Nextflow trace or log artifacts found",
-		"    detail: Searched trace patterns: trace*.txt",
-		"    detail: Searched log patterns: .nextflow.log",
+		"  searched_locations:",
+		"    - trace: /runs/empty (run directory trace files; patterns: trace*.txt)",
+		"    - trace: /runs/empty/results/pipeline_info (pipeline_info execution trace files; patterns: execution_trace*.txt)",
+		"    - log: /runs/empty (run directory log files; patterns: .nextflow.log)",
+		"",
+		"error: No supported Nextflow trace or log artifacts found",
+		"  code: unsupported_artifacts",
+		"  Searched trace patterns: trace*.txt",
+		"  Searched log patterns: .nextflow.log",
+		"hint: Use `nextflow run ... -with-trace` for future runs so gosh can build a complete trace-backed task index.",
 		"",
 	}, "\n")
 	if got := buf.String(); got != want {
 		t.Fatalf("RenderIndexHuman() =\n%s\nwant\n%s", got, want)
+	}
+	if strings.Contains(buf.String(), "diagnostics:") {
+		t.Fatalf("RenderIndexHuman() output = %q, did not want nested diagnostics heading", buf.String())
 	}
 }
 
@@ -678,18 +1184,18 @@ func TestRenderIndexJSONUnsupportedWithoutMetadataIncludesNullsAndEmptyArrays(t 
 	}
 }
 
-func TestRenderUnsupportedDiagnosticsHumanShowsDiagnostics(t *testing.T) {
+func TestRenderUnsupportedDiagnosticsHumanShowsGitStyleBlocks(t *testing.T) {
 	diagnostics := []domain.Diagnostic{
+		{
+			Severity: domain.DiagnosticInfo,
+			Code:     "nextflow_with_trace_recommended",
+			Message:  "Re-run with `-with-trace` to enable trace-backed summaries.",
+		},
 		{
 			Severity: domain.DiagnosticError,
 			Code:     "unsupported_artifacts",
 			Message:  "No supported Nextflow trace or log artifacts found",
 			Detail:   "Searched trace patterns: trace*.txt\nSearched log patterns: .nextflow.log",
-		},
-		{
-			Severity: domain.DiagnosticInfo,
-			Code:     "nextflow_with_trace_recommended",
-			Message:  "Re-run with `-with-trace` to enable trace-backed summaries.",
 		},
 	}
 
@@ -699,11 +1205,11 @@ func TestRenderUnsupportedDiagnosticsHumanShowsDiagnostics(t *testing.T) {
 	}
 
 	want := strings.Join([]string{
-		"diagnostics:",
-		"  - error unsupported_artifacts: No supported Nextflow trace or log artifacts found",
-		"    detail: Searched trace patterns: trace*.txt",
-		"    detail: Searched log patterns: .nextflow.log",
-		"  - info nextflow_with_trace_recommended: Re-run with `-with-trace` to enable trace-backed summaries.",
+		"error: No supported Nextflow trace or log artifacts found",
+		"  code: unsupported_artifacts",
+		"  Searched trace patterns: trace*.txt",
+		"  Searched log patterns: .nextflow.log",
+		"hint: Re-run with `-with-trace` to enable trace-backed summaries.",
 		"",
 	}, "\n")
 	if got := buf.String(); got != want {
@@ -747,15 +1253,14 @@ func TestRenderUnsupportedDiagnosticsJSONStable(t *testing.T) {
 	}
 }
 
-func TestRenderUnsupportedDiagnosticsHumanEmptyDiagnosticsClear(t *testing.T) {
+func TestRenderUnsupportedDiagnosticsHumanEmptyDiagnosticsWritesNothing(t *testing.T) {
 	var buf bytes.Buffer
 	if err := RenderUnsupportedDiagnostics(&buf, nil, domain.OutputFormatHuman); err != nil {
 		t.Fatalf("RenderUnsupportedDiagnostics() error = %v, want nil", err)
 	}
 
-	want := "diagnostics: none\n"
-	if got := buf.String(); got != want {
-		t.Fatalf("RenderUnsupportedDiagnostics() = %q, want %q", got, want)
+	if got := buf.String(); got != "" {
+		t.Fatalf("RenderUnsupportedDiagnostics() = %q, want empty output", got)
 	}
 }
 
@@ -850,6 +1355,97 @@ func TestRenderTasksHumanEmptyResultsClear(t *testing.T) {
 	want := "tasks: none\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("RenderTasksHuman() = %q, want %q", got, want)
+	}
+}
+
+func TestRenderTasksHumanDiagnosticsUseGitStyleBlocks(t *testing.T) {
+	view := domain.TasksView{
+		Tasks: []domain.Task{{ID: "aa/111111", Status: domain.TaskStatusCompleted, Process: "ALIGN", Name: "sample-1", Workdir: "/runs/example/work/aa/111111"}},
+		Diagnostics: []domain.Diagnostic{
+			{
+				Severity: domain.DiagnosticWarning,
+				Code:     "index_stale",
+				Message:  "index is stale",
+				Detail:   "Index path: /runs/example/.gosh/index.sqlite\nRefresh with `gosh index --refresh`.",
+			},
+			{
+				Severity: domain.DiagnosticInfo,
+				Code:     "nextflow_with_trace_recommended",
+				Message:  "Run future Nextflow workflows with -with-trace",
+				Detail:   "Use `nextflow run ... -with-trace` for future runs so gosh can build a complete trace-backed task index.",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderTasksHuman(&buf, view); err != nil {
+		t.Fatalf("RenderTasksHuman() error = %v, want nil", err)
+	}
+
+	want := strings.Join([]string{
+		"id\tstatus\tprocess\tname/tag\tworkdir\texit\tduration\trealtime\tcpus\tmemory",
+		"aa/111111\tCOMPLETED\tALIGN\tsample-1\t/runs/example/work/aa/111111\t-\t-\t-\t-\t-",
+		"",
+		"warning: index is stale",
+		"  code: index_stale",
+		"  Index path: /runs/example/.gosh/index.sqlite",
+		"hint: Refresh with `gosh index --refresh`.",
+		"hint: Use `nextflow run ... -with-trace` for future runs so gosh can build a complete trace-backed task index.",
+		"",
+	}, "\n")
+	if got := buf.String(); got != want {
+		t.Fatalf("RenderTasksHuman() =\n%s\nwant\n%s", got, want)
+	}
+	if strings.Contains(buf.String(), "diagnostics:") {
+		t.Fatalf("RenderTasksHuman() output = %q, did not want nested diagnostics heading", buf.String())
+	}
+}
+
+func TestRenderTasksHumanErrorDiagnosticsDoNotPretendEmptyTasks(t *testing.T) {
+	view := domain.TasksView{
+		Diagnostics: []domain.Diagnostic{
+			{
+				Severity: domain.DiagnosticError,
+				Code:     "tasks_unavailable_log_only",
+				Message:  "gosh tasks requires a trace-backed task index; complete task/resource/status data is unavailable in log-only mode",
+				Detail: strings.Join([]string{
+					"Mode: log-only",
+					"Run dir: /runs/log-only",
+					"Selected log: /runs/log-only/.nextflow.log",
+					"Only deterministic log-only failure evidence may be available; complete task rows require a Nextflow trace file.",
+				}, "\n"),
+			},
+			{
+				Severity: domain.DiagnosticInfo,
+				Code:     "nextflow_with_trace_recommended",
+				Message:  "Run future Nextflow workflows with -with-trace",
+				Detail:   "Use `nextflow run ... -with-trace` for future runs so gosh can build a complete trace-backed task index.",
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderTasksHuman(&buf, view); err != nil {
+		t.Fatalf("RenderTasksHuman() error = %v, want nil", err)
+	}
+
+	want := strings.Join([]string{
+		"error: gosh tasks requires a trace-backed task index; complete task/resource/status data is unavailable in log-only mode",
+		"  code: tasks_unavailable_log_only",
+		"  Mode: log-only",
+		"  Run dir: /runs/log-only",
+		"  Selected log: /runs/log-only/.nextflow.log",
+		"  Only deterministic log-only failure evidence may be available; complete task rows require a Nextflow trace file.",
+		"hint: Use `nextflow run ... -with-trace` for future runs so gosh can build a complete trace-backed task index.",
+		"",
+	}, "\n")
+	if got := buf.String(); got != want {
+		t.Fatalf("RenderTasksHuman() =\n%s\nwant\n%s", got, want)
+	}
+	for _, notWant := range []string{"tasks: none", "id\tstatus\tprocess", "diagnostics:"} {
+		if strings.Contains(buf.String(), notWant) {
+			t.Fatalf("RenderTasksHuman() output = %q, did not want %q", buf.String(), notWant)
+		}
 	}
 }
 
@@ -1319,6 +1915,499 @@ func TestRenderInspectJSONNotFoundStable(t *testing.T) {
 	}
 }
 
+func decodeRenderedInspectJSON(t *testing.T, view domain.InspectView) map[string]any {
+	t.Helper()
+
+	var buf bytes.Buffer
+	if err := RenderInspectJSON(&buf, view); err != nil {
+		t.Fatalf("RenderInspectJSON() error = %v, want nil", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &payload); err != nil {
+		t.Fatalf("RenderInspectJSON() produced invalid JSON: %v\noutput:\n%s", err, buf.String())
+	}
+	return payload
+}
+
+func jsonObject(t *testing.T, value any, name string) map[string]any {
+	t.Helper()
+	object, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("%s = %#v, want JSON object", name, value)
+	}
+	return object
+}
+
+func jsonArray(t *testing.T, value any, name string) []any {
+	t.Helper()
+	array, ok := value.([]any)
+	if !ok {
+		t.Fatalf("%s = %#v, want JSON array", name, value)
+	}
+	return array
+}
+
+func TestRenderInspectJSONLogOnlyExactDossierIncludesEvidenceAndPreservesTraceBackedFields(t *testing.T) {
+	exit := 2
+	view := domain.InspectView{
+		EvidenceKind: domain.InspectEvidenceLogOnly,
+		LogOnlyResolution: &domain.LogOnlySelectorResolution{
+			Kind:     domain.SelectorResolutionExact,
+			Selector: "bb/222222",
+			Evidence: &domain.LogOnlyTaskEvidence{ID: "bb/222222", ObservedStatus: domain.TaskStatusFailed},
+			Diagnostics: []domain.Diagnostic{
+				{Severity: domain.DiagnosticInfo, Code: "selector_exact", Message: "selector resolved from log-only evidence"},
+			},
+		},
+		LogOnlyDossier: &domain.LogOnlyTaskDossier{
+			Evidence: domain.LogOnlyTaskEvidence{
+				ID:             "bb/222222",
+				Workdir:        "/runs/log-only/work/bb/222222",
+				Process:        "PIPE:CALL",
+				Name:           "tumor-02",
+				ObservedStatus: domain.TaskStatusFailed,
+				Exit:           &exit,
+				ErrorSummary:   "No such file or directory",
+				ErrorBlock:     "Command exit status: 2\nCommand error:\nNo such file or directory",
+				Sources: []domain.LogOnlyEvidenceSource{
+					{Kind: domain.LogOnlyEvidenceSourceLog, Path: "/runs/log-only/.nextflow.log", Detail: "failure block"},
+					{Kind: domain.LogOnlyEvidenceSourceCommand, Path: "/runs/log-only/work/bb/222222/.command.err", Detail: "stderr snippet"},
+				},
+				Completeness:          domain.LogOnlyEvidencePartial,
+				CommandFilesAvailable: true,
+			},
+			Inventory: domain.CommandFileInventory{
+				Workdir: "/runs/log-only/work/bb/222222",
+				Files: []domain.CommandFile{
+					{Kind: domain.CommandFileErr, Path: "/runs/log-only/work/bb/222222/.command.err", Exists: true, Size: 128},
+					{Kind: domain.CommandFileShell, Path: "/runs/log-only/work/bb/222222/.command.sh", Exists: true, Size: 33},
+				},
+			},
+			Diagnostics: []domain.Diagnostic{
+				{Severity: domain.DiagnosticWarning, Code: "log_only_partial", Message: "log-only inspect is partial"},
+			},
+		},
+		Diagnostics: []domain.Diagnostic{
+			{Severity: domain.DiagnosticWarning, Code: "inspect_partial", Message: "complete task rows require a trace file"},
+		},
+	}
+
+	payload := decodeRenderedInspectJSON(t, view)
+	if got := payload["format"]; got != "json" {
+		t.Fatalf("format = %#v, want %q", got, "json")
+	}
+	if got := payload["evidence_kind"]; got != string(domain.InspectEvidenceLogOnly) {
+		t.Fatalf("evidence_kind = %#v, want %q", got, domain.InspectEvidenceLogOnly)
+	}
+
+	traceResolution := jsonObject(t, payload["resolution"], "resolution")
+	if got := traceResolution["task"]; got != nil {
+		t.Fatalf("resolution.task = %#v, want nil for log-only output", got)
+	}
+	if matches := jsonArray(t, traceResolution["matches"], "resolution.matches"); len(matches) != 0 {
+		t.Fatalf("resolution.matches length = %d, want 0", len(matches))
+	}
+	if diagnostics := jsonArray(t, traceResolution["diagnostics"], "resolution.diagnostics"); len(diagnostics) != 0 {
+		t.Fatalf("resolution.diagnostics length = %d, want 0", len(diagnostics))
+	}
+	if got := payload["dossier"]; got != nil {
+		t.Fatalf("dossier = %#v, want nil for log-only output", got)
+	}
+
+	logOnlyResolution := jsonObject(t, payload["log_only_resolution"], "log_only_resolution")
+	if got := logOnlyResolution["kind"]; got != string(domain.SelectorResolutionExact) {
+		t.Fatalf("log_only_resolution.kind = %#v, want %q", got, domain.SelectorResolutionExact)
+	}
+	if got := logOnlyResolution["selector"]; got != "bb/222222" {
+		t.Fatalf("log_only_resolution.selector = %#v, want %q", got, "bb/222222")
+	}
+	resolutionEvidence := jsonObject(t, logOnlyResolution["evidence"], "log_only_resolution.evidence")
+	if got := resolutionEvidence["id"]; got != "bb/222222" {
+		t.Fatalf("log_only_resolution.evidence.id = %#v, want %q", got, "bb/222222")
+	}
+	if matches := jsonArray(t, logOnlyResolution["matches"], "log_only_resolution.matches"); len(matches) != 0 {
+		t.Fatalf("log_only_resolution.matches length = %d, want 0", len(matches))
+	}
+	if diagnostics := jsonArray(t, logOnlyResolution["diagnostics"], "log_only_resolution.diagnostics"); len(diagnostics) != 1 {
+		t.Fatalf("log_only_resolution.diagnostics length = %d, want 1", len(diagnostics))
+	}
+
+	logOnlyDossier := jsonObject(t, payload["log_only_dossier"], "log_only_dossier")
+	dossierEvidence := jsonObject(t, logOnlyDossier["evidence"], "log_only_dossier.evidence")
+	if got := dossierEvidence["exit"]; got != float64(2) {
+		t.Fatalf("log_only_dossier.evidence.exit = %#v, want 2", got)
+	}
+	if got := dossierEvidence["error_block"]; got != "Command exit status: 2\nCommand error:\nNo such file or directory" {
+		t.Fatalf("log_only_dossier.evidence.error_block = %#v", got)
+	}
+	if sources := jsonArray(t, dossierEvidence["sources"], "log_only_dossier.evidence.sources"); len(sources) != 2 {
+		t.Fatalf("log_only_dossier.evidence.sources length = %d, want 2", len(sources))
+	}
+	if got := dossierEvidence["command_files_available"]; got != true {
+		t.Fatalf("log_only_dossier.evidence.command_files_available = %#v, want true", got)
+	}
+
+	inventory := jsonObject(t, logOnlyDossier["inventory"], "log_only_dossier.inventory")
+	files := jsonArray(t, inventory["files"], "log_only_dossier.inventory.files")
+	if len(files) != 2 {
+		t.Fatalf("log_only_dossier.inventory.files length = %d, want 2", len(files))
+	}
+	firstFile := jsonObject(t, files[0], "log_only_dossier.inventory.files[0]")
+	if got := firstFile["kind"]; got != string(domain.CommandFileShell) {
+		t.Fatalf("first command file kind = %#v, want shell sorted first", got)
+	}
+	if diagnostics := jsonArray(t, logOnlyDossier["diagnostics"], "log_only_dossier.diagnostics"); len(diagnostics) != 1 {
+		t.Fatalf("log_only_dossier.diagnostics length = %d, want 1", len(diagnostics))
+	}
+	if diagnostics := jsonArray(t, payload["diagnostics"], "diagnostics"); len(diagnostics) != 1 {
+		t.Fatalf("diagnostics length = %d, want 1", len(diagnostics))
+	}
+}
+
+func TestRenderInspectJSONLogOnlyAmbiguousSelectorIncludesMatchesAndEmptyArrays(t *testing.T) {
+	view := domain.InspectView{
+		LogOnlyResolution: &domain.LogOnlySelectorResolution{
+			Kind:     domain.SelectorResolutionAmbiguous,
+			Selector: "ALIGN",
+			Matches: []domain.LogOnlyTaskEvidence{
+				{ID: "bb/222222", ObservedStatus: domain.TaskStatusFailed, Process: "ALIGN_STAR", Name: "tumor-02", Workdir: "/runs/log-only/work/bb/222222", CommandFilesAvailable: true},
+				{ObservedStatus: domain.TaskStatusFailed, Process: "ALIGN_STAR", Name: "tumor-03"},
+			},
+		},
+	}
+
+	payload := decodeRenderedInspectJSON(t, view)
+	if got := payload["evidence_kind"]; got != string(domain.InspectEvidenceLogOnly) {
+		t.Fatalf("evidence_kind = %#v, want default %q", got, domain.InspectEvidenceLogOnly)
+	}
+	if got := payload["log_only_dossier"]; got != nil {
+		t.Fatalf("log_only_dossier = %#v, want nil for ambiguous selector", got)
+	}
+
+	logOnlyResolution := jsonObject(t, payload["log_only_resolution"], "log_only_resolution")
+	if got := logOnlyResolution["kind"]; got != string(domain.SelectorResolutionAmbiguous) {
+		t.Fatalf("log_only_resolution.kind = %#v, want %q", got, domain.SelectorResolutionAmbiguous)
+	}
+	if got := logOnlyResolution["evidence"]; got != nil {
+		t.Fatalf("log_only_resolution.evidence = %#v, want nil for ambiguous selector", got)
+	}
+	matches := jsonArray(t, logOnlyResolution["matches"], "log_only_resolution.matches")
+	if len(matches) != 2 {
+		t.Fatalf("log_only_resolution.matches length = %d, want 2", len(matches))
+	}
+	firstMatch := jsonObject(t, matches[0], "log_only_resolution.matches[0]")
+	if got := firstMatch["command_files_available"]; got != true {
+		t.Fatalf("first match command_files_available = %#v, want true", got)
+	}
+	secondMatch := jsonObject(t, matches[1], "log_only_resolution.matches[1]")
+	if got := secondMatch["id"]; got != "" {
+		t.Fatalf("second match id = %#v, want empty string", got)
+	}
+	if sources := jsonArray(t, secondMatch["sources"], "log_only_resolution.matches[1].sources"); len(sources) != 0 {
+		t.Fatalf("second match sources length = %d, want 0", len(sources))
+	}
+	if diagnostics := jsonArray(t, logOnlyResolution["diagnostics"], "log_only_resolution.diagnostics"); len(diagnostics) != 0 {
+		t.Fatalf("log_only_resolution.diagnostics length = %d, want 0", len(diagnostics))
+	}
+	if diagnostics := jsonArray(t, payload["diagnostics"], "diagnostics"); len(diagnostics) != 0 {
+		t.Fatalf("diagnostics length = %d, want 0", len(diagnostics))
+	}
+}
+
+func TestRenderLogOnlyInspectHumanExactDossierIncludesEvidenceSourcesWorkdirCommandSnippetsAndHints(t *testing.T) {
+	exit := 2
+	view := domain.InspectView{
+		EvidenceKind: domain.InspectEvidenceLogOnly,
+		LogOnlyResolution: &domain.LogOnlySelectorResolution{
+			Kind:     domain.SelectorResolutionExact,
+			Selector: "bb/222222",
+		},
+		LogOnlyDossier: &domain.LogOnlyTaskDossier{
+			Evidence: domain.LogOnlyTaskEvidence{
+				ID:             "bb/222222",
+				Workdir:        "/runs/log-only/work/bb/222222",
+				Process:        "PIPE:CALL",
+				Name:           "tumor-02",
+				ObservedStatus: domain.TaskStatusFailed,
+				Exit:           &exit,
+				ErrorSummary:   "No such file or directory",
+				ErrorBlock:     "Command exit status: 2\nCommand error:\nNo such file or directory",
+				Sources: []domain.LogOnlyEvidenceSource{
+					{Kind: domain.LogOnlyEvidenceSourceLog, Path: "/runs/log-only/.nextflow.log", Detail: "failure block"},
+					{Kind: domain.LogOnlyEvidenceSourceCommand, Path: "/runs/log-only/work/bb/222222/.command.err", Detail: "stderr snippet"},
+				},
+				Completeness:          domain.LogOnlyEvidencePartial,
+				CommandFilesAvailable: true,
+			},
+			Inventory: domain.CommandFileInventory{
+				Workdir: "/runs/log-only/work/bb/222222",
+				Files: []domain.CommandFile{
+					{
+						Kind:   domain.CommandFileErr,
+						Path:   "/runs/log-only/work/bb/222222/.command.err",
+						Exists: true,
+						Size:   128,
+						Snippet: &domain.Snippet{
+							Path:      "/runs/log-only/work/bb/222222/.command.err",
+							Strategy:  domain.SnippetStrategyError,
+							StartLine: 4,
+							EndLine:   6,
+							Content:   "before\nNo such file or directory\nafter",
+							Truncated: true,
+							MaxBytes:  4096,
+						},
+					},
+					{
+						Kind:   domain.CommandFileShell,
+						Path:   "/runs/log-only/work/bb/222222/.command.sh",
+						Exists: true,
+						Size:   33,
+						Snippet: &domain.Snippet{
+							Path:      "/runs/log-only/work/bb/222222/.command.sh",
+							Strategy:  domain.SnippetStrategyHead,
+							StartLine: 1,
+							EndLine:   2,
+							Content:   "#!/usr/bin/env bash\nmissing-tool --input tumor",
+							MaxBytes:  4096,
+						},
+					},
+				},
+			},
+			Diagnostics: []domain.Diagnostic{
+				{
+					Severity: domain.DiagnosticWarning,
+					Code:     "log_only_partial",
+					Message:  "log-only inspect is partial",
+					Detail:   "Selected log: /runs/log-only/.nextflow.log\nComplete task rows require a trace file.\nHint: Run future Nextflow workflows with -with-trace to produce complete task/resource/status data.",
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderLogOnlyInspectHuman(&buf, view); err != nil {
+		t.Fatalf("RenderLogOnlyInspectHuman() error = %v, want nil", err)
+	}
+
+	want := strings.Join([]string{
+		"selector: bb/222222",
+		"resolution: exact",
+		"evidence_kind: log-only-partial",
+		"evidence:",
+		"  id: bb/222222",
+		"  observed_status: FAILED",
+		"  process: PIPE:CALL",
+		"  name: tumor-02",
+		"  workdir: /runs/log-only/work/bb/222222",
+		"  exit: 2",
+		"  completeness: partial",
+		"  command_files_available: true",
+		"  error_summary: No such file or directory",
+		"  error_block:",
+		"    Command exit status: 2",
+		"    Command error:",
+		"    No such file or directory",
+		"sources:",
+		"  - kind=log path=/runs/log-only/.nextflow.log detail=failure block",
+		"  - kind=command-file path=/runs/log-only/work/bb/222222/.command.err detail=stderr snippet",
+		"workdir:",
+		"  path: /runs/log-only/work/bb/222222",
+		"  available: true",
+		"command_files:",
+		"  - kind=.command.sh path=/runs/log-only/work/bb/222222/.command.sh exists=true size=33",
+		"    snippet: strategy=head lines=1-2 truncated=false max_bytes=4096",
+		"    content:",
+		"      #!/usr/bin/env bash",
+		"      missing-tool --input tumor",
+		"  - kind=.command.err path=/runs/log-only/work/bb/222222/.command.err exists=true size=128",
+		"    snippet: strategy=error-focused lines=4-6 truncated=true max_bytes=4096",
+		"    content:",
+		"      before",
+		"      No such file or directory",
+		"      after",
+		"",
+		"warning: log-only inspect is partial",
+		"  code: log_only_partial",
+		"  Selected log: /runs/log-only/.nextflow.log",
+		"  Complete task rows require a trace file.",
+		"hint: Run future Nextflow workflows with -with-trace to produce complete task/resource/status data.",
+		"",
+	}, "\n")
+	if got := buf.String(); got != want {
+		t.Fatalf("RenderLogOnlyInspectHuman() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestRenderLogOnlyInspectHumanExactDossierWithoutWorkdirShowsUnavailableCommandFilesAndHints(t *testing.T) {
+	view := domain.InspectView{
+		EvidenceKind: domain.InspectEvidenceLogOnly,
+		LogOnlyResolution: &domain.LogOnlySelectorResolution{
+			Kind:     domain.SelectorResolutionExact,
+			Selector: "NO_WORKDIR",
+		},
+		LogOnlyDossier: &domain.LogOnlyTaskDossier{
+			Evidence: domain.LogOnlyTaskEvidence{
+				Process:        "NFCORE_RNA:NO_WORKDIR",
+				Name:           "sample-with-log-only-error",
+				ObservedStatus: domain.TaskStatusFailed,
+				ErrorSummary:   "process failed before workdir was observed",
+				ErrorBlock:     "No workdir line was parseable in the selected log",
+				Sources: []domain.LogOnlyEvidenceSource{
+					{Kind: domain.LogOnlyEvidenceSourceLog, Path: "/runs/log-only/.nextflow.log", Detail: "failure block"},
+				},
+				Completeness: domain.LogOnlyEvidencePartial,
+			},
+			Diagnostics: []domain.Diagnostic{
+				{
+					Severity: domain.DiagnosticWarning,
+					Code:     "inspect_workdir_unknown",
+					Message:  "command-file inventory unavailable",
+					Detail:   "The selected log-only evidence did not include a resolvable workdir.\nHint: Use the selected log error block or rerun with -with-trace.",
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderLogOnlyInspectHuman(&buf, view); err != nil {
+		t.Fatalf("RenderLogOnlyInspectHuman() error = %v, want nil", err)
+	}
+
+	want := strings.Join([]string{
+		"selector: NO_WORKDIR",
+		"resolution: exact",
+		"evidence_kind: log-only-partial",
+		"evidence:",
+		"  id: -",
+		"  observed_status: FAILED",
+		"  process: NFCORE_RNA:NO_WORKDIR",
+		"  name: sample-with-log-only-error",
+		"  workdir: -",
+		"  exit: -",
+		"  completeness: partial",
+		"  command_files_available: false",
+		"  error_summary: process failed before workdir was observed",
+		"  error_block:",
+		"    No workdir line was parseable in the selected log",
+		"sources:",
+		"  - kind=log path=/runs/log-only/.nextflow.log detail=failure block",
+		"workdir:",
+		"  path: -",
+		"  available: false",
+		"command_files: none",
+		"",
+		"warning: command-file inventory unavailable",
+		"  code: inspect_workdir_unknown",
+		"  The selected log-only evidence did not include a resolvable workdir.",
+		"hint: Use the selected log error block or rerun with -with-trace.",
+		"",
+	}, "\n")
+	if got := buf.String(); got != want {
+		t.Fatalf("RenderLogOnlyInspectHuman() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestRenderLogOnlyInspectHumanAmbiguousSelectorShowsLogOnlyMatchesAndDiagnosticHint(t *testing.T) {
+	view := domain.InspectView{
+		EvidenceKind: domain.InspectEvidenceLogOnly,
+		LogOnlyResolution: &domain.LogOnlySelectorResolution{
+			Kind:     domain.SelectorResolutionAmbiguous,
+			Selector: "ALIGN",
+			Matches: []domain.LogOnlyTaskEvidence{
+				{ID: "bb/222222", ObservedStatus: domain.TaskStatusFailed, Process: "ALIGN_STAR", Name: "tumor-02", Workdir: "/runs/log-only/work/bb/222222", CommandFilesAvailable: true},
+				{ObservedStatus: domain.TaskStatusFailed, Process: "ALIGN_STAR", Name: "tumor-03"},
+			},
+			Diagnostics: []domain.Diagnostic{
+				{
+					Severity: domain.DiagnosticWarning,
+					Code:     "selector_ambiguous",
+					Message:  "selector matched more than one log-only evidence row",
+					Detail:   "2 log-only evidence rows matched observed log-only fields; use a canonical id or full workdir path if available",
+				},
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderLogOnlyInspectHuman(&buf, view); err != nil {
+		t.Fatalf("RenderLogOnlyInspectHuman() error = %v, want nil", err)
+	}
+
+	want := strings.Join([]string{
+		"selector: ALIGN",
+		"resolution: ambiguous",
+		"evidence_kind: log-only-partial",
+		"matches:",
+		"id\tstatus\tprocess\tname\tworkdir\tcommand_files_available",
+		"bb/222222\tFAILED\tALIGN_STAR\ttumor-02\t/runs/log-only/work/bb/222222\ttrue",
+		"-\tFAILED\tALIGN_STAR\ttumor-03\t-\tfalse",
+		"",
+		"warning: selector matched more than one log-only evidence row",
+		"  code: selector_ambiguous",
+		"  2 log-only evidence rows matched observed log-only fields; use a canonical id or full workdir path if available",
+		"",
+	}, "\n")
+	if got := buf.String(); got != want {
+		t.Fatalf("RenderLogOnlyInspectHuman() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestRenderInspectHumanRoutesLogOnlyViewToLogOnlyHumanRendering(t *testing.T) {
+	exit := 1
+	view := domain.InspectView{
+		EvidenceKind: domain.InspectEvidenceLogOnly,
+		LogOnlyResolution: &domain.LogOnlySelectorResolution{
+			Kind:     domain.SelectorResolutionExact,
+			Selector: "bb/222222",
+		},
+		LogOnlyDossier: &domain.LogOnlyTaskDossier{
+			Evidence: domain.LogOnlyTaskEvidence{
+				ID:             "bb/222222",
+				Workdir:        "/runs/log-only/work/bb/222222",
+				Process:        "ALIGN_STAR",
+				Name:           "tumor-02",
+				ObservedStatus: domain.TaskStatusFailed,
+				Exit:           &exit,
+				ErrorSummary:   "No such file or directory",
+				Completeness:   domain.LogOnlyEvidencePartial,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	if err := RenderInspectHuman(&buf, view); err != nil {
+		t.Fatalf("RenderInspectHuman() error = %v, want nil", err)
+	}
+
+	want := strings.Join([]string{
+		"selector: bb/222222",
+		"resolution: exact",
+		"evidence_kind: log-only-partial",
+		"evidence:",
+		"  id: bb/222222",
+		"  observed_status: FAILED",
+		"  process: ALIGN_STAR",
+		"  name: tumor-02",
+		"  workdir: /runs/log-only/work/bb/222222",
+		"  exit: 1",
+		"  completeness: partial",
+		"  command_files_available: false",
+		"  error_summary: No such file or directory",
+		"  error_block:",
+		"    -",
+		"sources: none",
+		"workdir:",
+		"  path: /runs/log-only/work/bb/222222",
+		"  available: true",
+		"command_files: none",
+		"",
+	}, "\n")
+	if got := buf.String(); got != want {
+		t.Fatalf("RenderInspectHuman() =\n%s\nwant\n%s", got, want)
+	}
+}
+
 func TestRenderInspectHumanExactDossierIncludesTaskFilesAndSnippets(t *testing.T) {
 	exit := 137
 	view := domain.InspectView{
@@ -1420,9 +2509,12 @@ func TestRenderInspectHumanExactDossierIncludesTaskFilesAndSnippets(t *testing.T
 		"      before",
 		"      ERROR failed",
 		"      after",
-		"diagnostics:",
-		"  - info selector_exact: selector resolved exactly",
-		"  - warning inspect_partial: one command file was missing",
+		"",
+		"warning: one command file was missing",
+		"  code: inspect_partial",
+		"",
+		"info: selector resolved exactly",
+		"  code: selector_exact",
 		"",
 	}, "\n")
 	if got := buf.String(); got != want {
@@ -1457,8 +2549,9 @@ func TestRenderInspectHumanAmbiguousSelectorShowsDisambiguationTable(t *testing.
 		"id\tstatus\tprocess\tname/tag\tworkdir",
 		"bb/222222\tFAILED\tALIGN_STAR\tsample-2/tumor\t/runs/example/work/bb/222222",
 		"aa/111111\tCOMPLETED\tALIGN_STAR\tsample-1\t/runs/example/work/aa/111111",
-		"diagnostics:",
-		"  - warning selector_ambiguous: selector matched more than one task",
+		"",
+		"warning: selector matched more than one task",
+		"  code: selector_ambiguous",
 		"",
 	}, "\n")
 	if got := buf.String(); got != want {
@@ -1491,9 +2584,10 @@ func TestRenderInspectHumanNotFoundShowsDiagnostics(t *testing.T) {
 		"selector: missing-task",
 		"resolution: not-found",
 		"matches: none",
-		"diagnostics:",
-		"  - error selector_not_found: selector did not match any indexed task",
-		"    detail: Try `gosh tasks` to list available task IDs.",
+		"",
+		"error: selector did not match any indexed task",
+		"  code: selector_not_found",
+		"hint: Try `gosh tasks` to list available task IDs.",
 		"",
 	}, "\n")
 	if got := buf.String(); got != want {
@@ -1514,6 +2608,23 @@ func TestRenderIndexHumanReturnsWriterError(t *testing.T) {
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("RenderIndexHuman() error = %v, want wrapping %v", err, wantErr)
+	}
+}
+
+func TestRenderLogOnlyInspectHumanReturnsWriterError(t *testing.T) {
+	wantErr := errors.New("write failed")
+	err := RenderLogOnlyInspectHuman(failingWriter{err: wantErr}, domain.InspectView{
+		EvidenceKind: domain.InspectEvidenceLogOnly,
+		LogOnlyResolution: &domain.LogOnlySelectorResolution{
+			Kind:     domain.SelectorResolutionExact,
+			Selector: "aa/111111",
+		},
+		LogOnlyDossier: &domain.LogOnlyTaskDossier{
+			Evidence: domain.LogOnlyTaskEvidence{ID: "aa/111111", ObservedStatus: domain.TaskStatusFailed},
+		},
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("RenderLogOnlyInspectHuman() error = %v, want wrapping %v", err, wantErr)
 	}
 }
 

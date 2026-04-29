@@ -37,8 +37,9 @@ type RootCommand struct {
 }
 
 type GlobalOptions struct {
-	RunDir string
-	Format domain.OutputFormat
+	RunDir     string
+	ResultsDir string
+	Format     domain.OutputFormat
 }
 
 type StatusOptions struct {
@@ -65,10 +66,10 @@ func NewRootCommand(version string) RootCommand {
 		Version:       version,
 		DefaultRunDir: run.DefaultRunDir,
 		Commands: []CommandSpec{
-			{Name: CommandStatus, Usage: "gosh status [--run-dir DIR] [--json]", Purpose: "summarize the selected Nextflow run"},
-			{Name: CommandTasks, Usage: "gosh tasks [--run-dir DIR] [filters] [--json]", Purpose: "list trace-backed task rows"},
-			{Name: CommandInspect, Usage: "gosh inspect <task> [--run-dir DIR] [--json]", Purpose: "show a bounded task dossier"},
-			{Name: CommandIndex, Usage: "gosh index [--run-dir DIR] [--refresh] [--json]", Purpose: "show or rebuild index diagnostics"},
+			{Name: CommandStatus, Usage: "gosh status [--run-dir DIR] [--results-dir DIR] [--json]", Purpose: "summarize the selected Nextflow run"},
+			{Name: CommandTasks, Usage: "gosh tasks [--run-dir DIR] [--results-dir DIR] [filters] [--json]", Purpose: "list trace-backed task rows"},
+			{Name: CommandInspect, Usage: "gosh inspect <task> [--run-dir DIR] [--results-dir DIR] [--json]", Purpose: "show a bounded task dossier"},
+			{Name: CommandIndex, Usage: "gosh index [--run-dir DIR] [--results-dir DIR] [--refresh] [--json]", Purpose: "show or rebuild index diagnostics"},
 		},
 	}
 }
@@ -116,6 +117,7 @@ func Execute(ctx context.Context, args []string, stdout io.Writer, stderr io.Wri
 		}
 		globalLines := []string{
 			fmt.Sprintf("  --run-dir, -d DIR   Nextflow run directory (default %q)", root.DefaultRunDir),
+			"  --results-dir DIR   Nextflow results directory (default <run-dir>/results)",
 			"  --json              Write JSON output",
 			"  --format FORMAT     Output format: human or json",
 			"  --help, -h          Show help",
@@ -183,6 +185,7 @@ func Execute(ctx context.Context, args []string, stdout io.Writer, stderr io.Wri
 
 		optionLines := []string{
 			fmt.Sprintf("  --run-dir, -d DIR   Nextflow run directory (default %q)", root.DefaultRunDir),
+			"  --results-dir DIR   Nextflow results directory (default <run-dir>/results)",
 			"  --json              Write JSON output",
 			"  --format FORMAT     Output format: human or json",
 			"  --help, -h          Show command help",
@@ -217,9 +220,9 @@ func Execute(ctx context.Context, args []string, stdout io.Writer, stderr io.Wri
 			return writeVersion()
 		case arg == "--":
 			i = len(args)
-		case arg == "--run-dir" || arg == "-d" || arg == "--format":
+		case arg == "--run-dir" || arg == "-d" || arg == "--results-dir" || arg == "--format":
 			i++
-		case arg == "--json" || strings.HasPrefix(arg, "--run-dir=") || strings.HasPrefix(arg, "--format="):
+		case arg == "--json" || strings.HasPrefix(arg, "--run-dir=") || strings.HasPrefix(arg, "--results-dir=") || strings.HasPrefix(arg, "--format="):
 			// Continue scanning global options before the command.
 		case strings.HasPrefix(arg, "-"):
 			i = len(args)
@@ -349,6 +352,14 @@ func parseSharedGlobalOption(args []string, index int, options *GlobalOptions) (
 		return true, index + 1, nil
 	}
 
+	if value, handled, next, err := parseOptionValue(args, index, "--results-dir", "DIR"); handled {
+		if err != nil {
+			return true, index, err
+		}
+		options.ResultsDir = value
+		return true, next, nil
+	}
+
 	if arg == "--json" {
 		options.Format = domain.OutputFormatJSON
 		return true, index, nil
@@ -382,12 +393,7 @@ func normalizeOutputFormat(format domain.OutputFormat) (domain.OutputFormat, err
 }
 
 func nextflowTraceRecommendation() domain.Diagnostic {
-	return domain.Diagnostic{
-		Severity: domain.DiagnosticInfo,
-		Code:     "nextflow_with_trace_recommended",
-		Message:  "Run future Nextflow workflows with -with-trace",
-		Detail:   "Use `nextflow run ... -with-trace` for future runs so gosh can build a complete trace-backed task index.",
-	}
+	return domain.NextflowTraceRecommendationDiagnostic()
 }
 
 func selectedLogPath(artifacts domain.ArtifactSet) string {
@@ -418,9 +424,10 @@ func renderUnsupportedCommand(writer io.Writer, diagnostics []domain.Diagnostic,
 }
 
 type commandContext struct {
-	RunDir    domain.RunDir
-	Artifacts domain.ArtifactSet
-	Format    domain.OutputFormat
+	RunDir     domain.RunDir
+	ResultsDir domain.ResultsDir
+	Artifacts  domain.ArtifactSet
+	Format     domain.OutputFormat
 }
 
 func loadCommandContext(ctx context.Context, global GlobalOptions) (commandContext, error) {
@@ -440,6 +447,30 @@ func loadCommandContext(ctx context.Context, global GlobalOptions) (commandConte
 	}
 
 	return commandContext{RunDir: runDir, Artifacts: artifacts, Format: format}, nil
+}
+
+func loadCommandContextWithResultsDir(ctx context.Context, global GlobalOptions) (commandContext, error) {
+	runDir, err := run.ResolveRunDir(global.RunDir)
+	if err != nil {
+		return commandContext{}, err
+	}
+
+	resultsDir, err := run.ResolveResultsDir(runDir, global.ResultsDir)
+	if err != nil {
+		return commandContext{}, err
+	}
+
+	artifacts, err := run.DiscoverArtifactsWithResultsDir(ctx, runDir, resultsDir)
+	if err != nil {
+		return commandContext{}, err
+	}
+
+	format, err := normalizeOutputFormat(global.Format)
+	if err != nil {
+		return commandContext{}, err
+	}
+
+	return commandContext{RunDir: runDir, ResultsDir: resultsDir, Artifacts: artifacts, Format: format}, nil
 }
 
 func ParseGlobalOptions(args []string) (GlobalOptions, []string, error) {
@@ -642,7 +673,7 @@ func ParseIndexOptions(global GlobalOptions, args []string) (IndexOptions, error
 }
 
 func RunStatus(ctx context.Context, options StatusOptions, writer io.Writer) error {
-	command, err := loadCommandContext(ctx, options.Global)
+	command, err := loadCommandContextWithResultsDir(ctx, options.Global)
 	if err != nil {
 		return err
 	}
@@ -696,11 +727,11 @@ func RunStatus(ctx context.Context, options StatusOptions, writer io.Writer) err
 			return fmt.Errorf("status log-only: missing log source")
 		}
 
-		failures, err := nflog.ParseLogOnlyFailures(ctx, runDir, *artifacts.Log)
+		evidence, err := nflog.ParseLogOnlyTaskEvidence(ctx, runDir, *artifacts.Log)
 		if err != nil {
 			return err
 		}
-		summary, err := nflog.BuildLogOnlyStatus(runDir, artifacts, failures)
+		summary, err := nflog.BuildLogOnlyEvidenceStatus(runDir, artifacts, evidence)
 		if err != nil {
 			return err
 		}
@@ -722,7 +753,7 @@ func RunStatus(ctx context.Context, options StatusOptions, writer io.Writer) err
 }
 
 func RunTasks(ctx context.Context, options TasksOptions, writer io.Writer) error {
-	command, err := loadCommandContext(ctx, options.Global)
+	command, err := loadCommandContextWithResultsDir(ctx, options.Global)
 	if err != nil {
 		return err
 	}
@@ -757,12 +788,23 @@ func RunTasks(ctx context.Context, options TasksOptions, writer io.Writer) error
 		return renderTasks(taskRows, &metadata)
 
 	case domain.IndexModeLogOnly:
-		diagnostics := diagnosticsWithTraceRecommendation(artifacts, domain.Diagnostic{
+		diagnostic := domain.Diagnostic{
 			Severity: domain.DiagnosticError,
 			Code:     "tasks_unavailable_log_only",
 			Message:  "gosh tasks requires a trace-backed task index; complete task/resource/status data is unavailable in log-only mode",
 			Detail:   "Selected log: " + selectedLogPath(artifacts) + "\nOnly deterministic log-only failure evidence may be available; complete task rows require a Nextflow trace file.",
-		})
+		}
+		if format == domain.OutputFormatHuman {
+			diagnostic.Message = "task table unavailable without a trace file"
+			diagnostic.Detail = strings.Join([]string{
+				"Mode: " + string(artifacts.Mode),
+				"Run dir: " + runDir.Path,
+				"Selected log: " + selectedLogPath(artifacts),
+				"Only deterministic log-only failure evidence may be available; complete task/resource/status data is unavailable in log-only mode.",
+				"Complete task rows require a Nextflow trace file.",
+			}, "\n")
+		}
+		diagnostics := diagnosticsWithTraceRecommendation(artifacts, diagnostic)
 		return renderUnsupportedCommand(writer, diagnostics, format, fmt.Errorf("tasks: complete task/resource/status data is unavailable in log-only mode"))
 
 	case domain.IndexModeUnsupported:
@@ -856,13 +898,80 @@ func RunInspect(ctx context.Context, options InspectOptions, writer io.Writer) e
 		return renderInspect(view)
 
 	case domain.IndexModeLogOnly:
-		diagnostics := diagnosticsWithTraceRecommendation(artifacts, domain.Diagnostic{
-			Severity: domain.DiagnosticError,
-			Code:     "inspect_unavailable_log_only",
-			Message:  "gosh inspect requires a trace-backed task index; complete task/resource/status data is unavailable in log-only mode",
-			Detail:   "Selected log: " + selectedLogPath(artifacts) + "\nOnly deterministic log-only failure evidence may be available; complete task rows and command-file workdirs require a Nextflow trace file.",
-		})
-		return renderUnsupportedCommand(writer, diagnostics, format, fmt.Errorf("inspect: complete task/resource/status data is unavailable in log-only mode"))
+		if artifacts.Log == nil {
+			return fmt.Errorf("inspect log-only: missing log source")
+		}
+
+		evidence, err := nflog.ParseLogOnlyTaskEvidence(ctx, runDir, *artifacts.Log)
+		if err != nil {
+			return err
+		}
+
+		resolution, err := tasks.ResolveLogOnlySelector(options.Selector, evidence)
+		if err != nil {
+			return err
+		}
+
+		view := domain.InspectView{
+			EvidenceKind:      domain.InspectEvidenceLogOnly,
+			LogOnlyResolution: &resolution,
+			Format:            format,
+		}
+		if len(evidence) == 0 {
+			view.Diagnostics = append(view.Diagnostics, domain.Diagnostic{
+				Severity: domain.DiagnosticError,
+				Code:     "log_only_no_parseable_evidence",
+				Message:  "No parseable task evidence found in selected Nextflow log",
+				Detail: strings.Join([]string{
+					"Selected log: " + selectedLogPath(artifacts),
+					"No parseable task, lifecycle, failure, or workdir evidence was found in the selected Nextflow log.",
+					"The run may have failed before task evidence was emitted, or this log format is unsupported.",
+					"Complete task rows and command-file workdirs require a Nextflow trace file.",
+					"Hint: Run future Nextflow workflows with -with-trace to produce complete task/resource/status data.",
+				}, "\n"),
+			}, nextflowTraceRecommendation())
+		}
+		if resolution.Kind != domain.SelectorResolutionExact {
+			return renderInspect(view)
+		}
+
+		inventory := domain.CommandFileInventory{}
+		diagnostics := []domain.Diagnostic{
+			{
+				Severity: domain.DiagnosticWarning,
+				Code:     "log_only_partial",
+				Message:  "log-only inspect is partial",
+				Detail: strings.Join([]string{
+					"Selected log: " + selectedLogPath(artifacts),
+					"Complete task rows require a trace file.",
+					"Hint: Run future Nextflow workflows with -with-trace to produce complete task/resource/status data.",
+				}, "\n"),
+			},
+		}
+		if resolution.Evidence != nil && strings.TrimSpace(resolution.Evidence.Workdir) != "" {
+			inventory, err = inspect.InventoryCommandFiles(ctx, resolution.Evidence.Workdir, inspect.SnippetOptions{
+				MaxBytes: inspectSnippetMaxBytes,
+				MaxLines: inspectSnippetMaxLines,
+			})
+			if err != nil {
+				return fmt.Errorf("inspect command files for log-only selector %q: %w", resolution.Selector, err)
+			}
+		} else {
+			diagnostics = append(diagnostics, domain.Diagnostic{
+				Severity: domain.DiagnosticWarning,
+				Code:     "inspect_workdir_unknown",
+				Message:  "command-file inventory unavailable",
+				Detail:   "The selected log-only evidence did not include a resolvable workdir.\nHint: Use the selected log error block or rerun with -with-trace.",
+			})
+		}
+
+		dossier, err := tasks.BuildLogOnlyTaskDossier(resolution, inventory)
+		if err != nil {
+			return err
+		}
+		dossier.Diagnostics = append(dossier.Diagnostics, diagnostics...)
+		view.LogOnlyDossier = &dossier
+		return renderInspect(view)
 
 	case domain.IndexModeUnsupported:
 		diagnostics := diagnosticsForUnsupportedArtifacts(runDir, artifacts, domain.Diagnostic{
@@ -879,7 +988,7 @@ func RunInspect(ctx context.Context, options InspectOptions, writer io.Writer) e
 }
 
 func RunIndex(ctx context.Context, options IndexOptions, writer io.Writer) error {
-	command, err := loadCommandContext(ctx, options.Global)
+	command, err := loadCommandContextWithResultsDir(ctx, options.Global)
 	if err != nil {
 		return err
 	}
