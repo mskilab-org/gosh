@@ -15,7 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 type Store struct {
 	Path string
@@ -381,6 +381,9 @@ func CheckFreshness(ctx context.Context, store *Store, artifacts domain.Artifact
 	}
 	if metadata == nil {
 		return domain.IndexFreshnessMissing, "index metadata missing", nil
+	}
+	if metadata.SchemaVersion != SchemaVersion {
+		return domain.IndexFreshnessStale, "index schema version changed", nil
 	}
 	if metadata.Mode != artifacts.Mode {
 		return domain.IndexFreshnessStale, "index mode changed", nil

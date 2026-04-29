@@ -121,12 +121,15 @@ const (
 )
 
 type Task struct {
-	RowOrder     int64
-	ID           string
-	Status       TaskStatus
-	Process      string
-	Name         string
-	Tag          string
+	RowOrder int64
+	ID       string
+	Status   TaskStatus
+	Process  string
+	Name     string
+	Tag      string
+	// Workdir is empty when unknown, otherwise a path to the task work directory.
+	// When resolved from a short Nextflow hash prefix, it may point to a longer
+	// existing on-disk directory while ID remains the canonical trace/log hash.
 	Workdir      string
 	Exit         *int
 	Duration     string
@@ -239,7 +242,10 @@ type TaskDossier struct {
 }
 
 type LogOnlyFailure struct {
-	ID           string
+	ID string
+	// Workdir is empty when unknown, otherwise a path to the task work directory.
+	// When resolved from a short Nextflow hash prefix, it may point to a longer
+	// existing on-disk directory while ID remains the canonical trace/log hash.
 	Workdir      string
 	Process      string
 	Name         string
@@ -270,7 +276,10 @@ type LogOnlyEvidenceSource struct {
 }
 
 type LogOnlyTaskEvidence struct {
-	ID                    string
+	ID string
+	// Workdir is empty when unknown, otherwise a path to the task work directory.
+	// When resolved from a short Nextflow hash prefix, it may point to a longer
+	// existing on-disk directory while ID remains the canonical trace/log hash.
 	Workdir               string
 	Process               string
 	Name                  string

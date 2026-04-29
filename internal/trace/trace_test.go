@@ -284,11 +284,7 @@ func TestNormalizeRecordColumnsRejectsAmbiguousAliases(t *testing.T) {
 	if !reflect.DeepEqual(got, NormalizedRecord{}) {
 		t.Fatalf("record on error = %#v, want zero value", got)
 	}
-	for _, want := range []string{"normalize record columns", "alias", "id"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
-		}
-	}
+	assertErrorContainsAll(t, err, "normalize record columns", "alias", "id")
 }
 
 func TestDeriveNamePartsSplitsScopedProcessAndTag(t *testing.T) {
@@ -494,11 +490,7 @@ func TestTaskFromNormalizedRecordRejectsRecordsWithoutParseableHashOrWorkdir(t *
 			if !reflect.DeepEqual(got, domain.Task{}) {
 				t.Fatalf("task on error = %#v, want zero value", got)
 			}
-			for _, want := range []string{"task from normalized record", "row 9", "hash", "workdir"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
-				}
-			}
+			assertErrorContainsAll(t, err, "task from normalized record", "row 9", "hash", "workdir")
 		})
 	}
 }
@@ -515,11 +507,7 @@ func TestTaskFromNormalizedRecordPropagatesInvalidExitValues(t *testing.T) {
 	if !reflect.DeepEqual(got, domain.Task{}) {
 		t.Fatalf("task on error = %#v, want zero value", got)
 	}
-	for _, want := range []string{"task from normalized record", "row 4", "exit", "killed"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
-		}
-	}
+	assertErrorContainsAll(t, err, "task from normalized record", "row 4", "exit", "killed")
 }
 
 func TestNormalizeTaskStatusMapsKnownStatuses(t *testing.T) {
@@ -636,11 +624,7 @@ func TestParseNullableExitRejectsInvalidNonblankValues(t *testing.T) {
 			if got != nil {
 				t.Fatalf("value on error = %d, want nil", *got)
 			}
-			for _, want := range []string{"parse nullable exit", raw} {
-				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
-				}
-			}
+			assertErrorContainsAll(t, err, "parse nullable exit", raw)
 		})
 	}
 }
@@ -679,11 +663,7 @@ func TestDetectDelimiterRejectsUnsupportedExtensionClearly(t *testing.T) {
 	if got != 0 {
 		t.Fatalf("delimiter on error = %q, want zero value", rune(got))
 	}
-	for _, want := range []string{"unsupported", ".json", ".csv", ".tsv", ".txt"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
-		}
-	}
+	assertErrorContainsAll(t, err, "unsupported", ".json", ".csv", ".tsv", ".txt")
 }
 
 func TestDetectDelimiterRejectsEmptyPathClearly(t *testing.T) {
@@ -837,11 +817,7 @@ func TestParseTraceRejectsInvalidSource(t *testing.T) {
 			if got != nil {
 				t.Fatalf("tasks on error = %#v, want nil", got)
 			}
-			for _, want := range tt.want {
-				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
-				}
-			}
+			assertErrorContainsAll(t, err, tt.want...)
 		})
 	}
 }
@@ -919,27 +895,24 @@ func TestDeriveCanonicalTaskIDRejectsEmptyAndUnparseableValuesClearly(t *testing
 			if got != "" {
 				t.Fatalf("id on error = %q, want empty", got)
 			}
-			for _, want := range tt.want {
-				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
-				}
-			}
+			assertErrorContainsAll(t, err, tt.want...)
 		})
 	}
 }
 
 func TestResolveTaskWorkdirUsesProvidedFullPathWithoutRequiringItToExist(t *testing.T) {
 	runDir := domain.RunDir{Path: t.TempDir()}
-	workdir := filepath.Join(t.TempDir(), "custom-work-root", "ab", "c123def")
+	workdir := filepath.Join(t.TempDir(), "custom-work-root", "ab") + string(filepath.Separator) + "ignored" + string(filepath.Separator) + ".." + string(filepath.Separator) + "c123def"
+	want := filepath.Clean(workdir)
 
 	got, err := ResolveTaskWorkdir(runDir, "ab/c123def", workdir)
 	if err != nil {
 		t.Fatalf("ResolveTaskWorkdir() returned error: %v", err)
 	}
-	if got != workdir {
-		t.Fatalf("ResolveTaskWorkdir() = %q, want provided full path %q", got, workdir)
+	if got != want {
+		t.Fatalf("ResolveTaskWorkdir() = %q, want cleaned provided full path %q", got, want)
 	}
-	if _, statErr := os.Stat(workdir); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(want); !os.IsNotExist(statErr) {
 		t.Fatalf("ResolveTaskWorkdir() should not create provided workdir; stat error = %v", statErr)
 	}
 }
@@ -1002,6 +975,151 @@ func TestResolveTaskWorkdirReturnsUnknownForBlankValueWhenDerivedPathIsMissing(t
 	if got != "" {
 		t.Fatalf("ResolveTaskWorkdir() = %q, want empty unknown workdir", got)
 	}
+}
+
+func TestResolveTaskWorkdirRejectsInvalidRawNonPathNonHash(t *testing.T) {
+	got, err := ResolveTaskWorkdir(domain.RunDir{Path: t.TempDir()}, "ab/c123def", "not-a-hash")
+	if err == nil {
+		t.Fatalf("ResolveTaskWorkdir() returned nil error and workdir %q", got)
+	}
+	if got != "" {
+		t.Fatalf("workdir on error = %q, want empty", got)
+	}
+	assertErrorContainsAll(t, err, "neither a path nor a hash", "not-a-hash")
+}
+
+func TestResolveTaskWorkdirRejectsHashCanonicalMismatch(t *testing.T) {
+	got, err := ResolveTaskWorkdir(domain.RunDir{Path: t.TempDir()}, "ab/c123def", "ab/c123dee")
+	if err == nil {
+		t.Fatalf("ResolveTaskWorkdir() returned nil error and workdir %q", got)
+	}
+	if got != "" {
+		t.Fatalf("workdir on error = %q, want empty", got)
+	}
+	assertErrorContainsAll(t, err, "hash value", "ab/c123dee", "not canonical id", "ab/c123def")
+}
+
+func TestResolveTaskWorkdirResolvesUniqueRunWorkdirFromHashPrefix(t *testing.T) {
+	runDir := t.TempDir()
+	want := filepath.Join(runDir, "work", "9e", "c300c50150c213c2d44ca9e4624d8c")
+	if err := os.MkdirAll(want, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", want, err)
+	}
+
+	got, err := ResolveTaskWorkdir(domain.RunDir{Path: runDir}, "9e/c300c5", "9e/c300c5")
+	if err != nil {
+		t.Fatalf("ResolveTaskWorkdir() returned error: %v", err)
+	}
+	if got != want {
+		t.Fatalf("ResolveTaskWorkdir() = %q, want unique prefix match %q", got, want)
+	}
+}
+
+func TestResolveHashPrefixWorkdirFindsUniqueDirectory(t *testing.T) {
+	runDir := t.TempDir()
+	shardDir := filepath.Join(runDir, "work", "9e")
+	want := filepath.Join(shardDir, "c300c50150c213c2d44ca9e4624d8c")
+	if err := os.MkdirAll(want, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", want, err)
+	}
+	if err := os.MkdirAll(filepath.Join(shardDir, "c300c6aaaaaaaaaaaaaaaaaaaaaaaa"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(non-match): %v", err)
+	}
+	matchingFile := filepath.Join(shardDir, "c300c5-not-a-directory")
+	if err := os.WriteFile(matchingFile, []byte("not a workdir"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q): %v", matchingFile, err)
+	}
+
+	got, err := resolveHashPrefixWorkdir(domain.RunDir{Path: runDir}, "9e/c300c5")
+	if err != nil {
+		t.Fatalf("resolveHashPrefixWorkdir() returned error: %v", err)
+	}
+	if got != want {
+		t.Fatalf("resolveHashPrefixWorkdir() = %q, want %q", got, want)
+	}
+}
+
+func TestResolveHashPrefixWorkdirReturnsUnknownForNoMatchingDirectory(t *testing.T) {
+	runDir := t.TempDir()
+	shardDir := filepath.Join(runDir, "work", "9e")
+	other := filepath.Join(shardDir, "c300c6aaaaaaaaaaaaaaaaaaaaaaaa")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", other, err)
+	}
+
+	got, err := resolveHashPrefixWorkdir(domain.RunDir{Path: runDir}, "9e/c300c5")
+	if err != nil {
+		t.Fatalf("resolveHashPrefixWorkdir() returned error: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("resolveHashPrefixWorkdir() = %q, want empty unknown workdir", got)
+	}
+}
+
+func TestResolveHashPrefixWorkdirReturnsAmbiguityErrorForMultipleDirectories(t *testing.T) {
+	runDir := t.TempDir()
+	shardDir := filepath.Join(runDir, "work", "9e")
+	matches := []string{
+		filepath.Join(shardDir, "c300c50150c213c2d44ca9e4624d8c"),
+		filepath.Join(shardDir, "c300c5ffffffffffffffffffffffff"),
+	}
+	for _, match := range matches {
+		if err := os.MkdirAll(match, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q): %v", match, err)
+		}
+	}
+
+	got, err := resolveHashPrefixWorkdir(domain.RunDir{Path: runDir}, "9e/c300c5")
+	if err == nil {
+		t.Fatalf("resolveHashPrefixWorkdir() returned nil error and workdir %q", got)
+	}
+	if got != "" {
+		t.Fatalf("workdir on ambiguity = %q, want empty", got)
+	}
+	assertErrorContainsAll(t, err, "ambiguous", "9e/c300c5", shardDir)
+}
+
+func TestResolveHashPrefixWorkdirReturnsUnknownForMissingShard(t *testing.T) {
+	runDir := t.TempDir()
+
+	got, err := resolveHashPrefixWorkdir(domain.RunDir{Path: runDir}, "9e/c300c5")
+	if err != nil {
+		t.Fatalf("resolveHashPrefixWorkdir() returned error: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("resolveHashPrefixWorkdir() = %q, want empty unknown workdir", got)
+	}
+}
+
+func TestResolveHashPrefixWorkdirIgnoresNonDirectories(t *testing.T) {
+	runDir := t.TempDir()
+	shardDir := filepath.Join(runDir, "work", "9e")
+	if err := os.MkdirAll(shardDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", shardDir, err)
+	}
+	matchingFile := filepath.Join(shardDir, "c300c50150c213c2d44ca9e4624d8c")
+	if err := os.WriteFile(matchingFile, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q): %v", matchingFile, err)
+	}
+
+	got, err := resolveHashPrefixWorkdir(domain.RunDir{Path: runDir}, "9e/c300c5")
+	if err != nil {
+		t.Fatalf("resolveHashPrefixWorkdir() returned error: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("resolveHashPrefixWorkdir() = %q, want empty unknown workdir", got)
+	}
+}
+
+func TestResolveHashPrefixWorkdirRejectsInvalidCanonicalID(t *testing.T) {
+	got, err := resolveHashPrefixWorkdir(domain.RunDir{Path: t.TempDir()}, "not-a-canonical-id")
+	if err == nil {
+		t.Fatalf("resolveHashPrefixWorkdir() returned nil error and workdir %q", got)
+	}
+	if got != "" {
+		t.Fatalf("workdir on error = %q, want empty", got)
+	}
+	assertErrorContainsAll(t, err, "invalid canonical id", "not-a-canonical-id")
 }
 
 func TestNormalizeTraceRecordMapsCommonTraceColumns(t *testing.T) {
@@ -1099,6 +1217,41 @@ func TestNormalizeTraceRecordMapsNFCoreExecutionTraceAliases(t *testing.T) {
 	}
 }
 
+func TestNormalizeTraceRecordResolvesShortHashToLongWorkdirWithoutWorkdirColumn(t *testing.T) {
+	runDir := t.TempDir()
+	wantWorkdir := filepath.Join(runDir, "work", "9e", "c300c50150c213c2d44ca9e4624d8c")
+	if err := os.MkdirAll(wantWorkdir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", wantWorkdir, err)
+	}
+
+	record := RawRecord{
+		RowOrder: 13,
+		Columns: map[string]string{
+			"hash":   "9e/c300c5",
+			"status": "failed",
+			"name":   "PIPE:STEP (sample)",
+		},
+	}
+
+	got, err := NormalizeTraceRecord(domain.RunDir{Path: runDir}, record)
+	if err != nil {
+		t.Fatalf("NormalizeTraceRecord() returned error: %v", err)
+	}
+
+	want := domain.Task{
+		RowOrder: 13,
+		ID:       "9e/c300c5",
+		Status:   domain.TaskStatusFailed,
+		Process:  "PIPE:STEP",
+		Name:     "PIPE:STEP (sample)",
+		Tag:      "sample",
+		Workdir:  wantWorkdir,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("NormalizeTraceRecord() = %#v, want %#v", got, want)
+	}
+}
+
 func TestNormalizeTraceRecordUsesWorkdirWhenHashColumnIsMissing(t *testing.T) {
 	runDir := domain.RunDir{Path: t.TempDir()}
 	workdir := filepath.Join(t.TempDir(), "work", "DE", "F456")
@@ -1171,11 +1324,7 @@ func TestNormalizeTraceRecordRejectsRecordsWithoutParseableHashOrWorkdir(t *test
 			if !reflect.DeepEqual(got, domain.Task{}) {
 				t.Fatalf("task on error = %#v, want zero value", got)
 			}
-			for _, want := range []string{"normalize trace record", "row 9", "hash", "workdir"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
-				}
-			}
+			assertErrorContainsAll(t, err, "normalize trace record", "row 9", "hash", "workdir")
 		})
 	}
 }
@@ -1194,11 +1343,7 @@ func TestNormalizeTraceRecordPropagatesInvalidExitValues(t *testing.T) {
 	if !reflect.DeepEqual(got, domain.Task{}) {
 		t.Fatalf("task on error = %#v, want zero value", got)
 	}
-	for _, want := range []string{"normalize trace record", "row 4", "exit", "killed"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
-		}
-	}
+	assertErrorContainsAll(t, err, "normalize trace record", "row 4", "exit", "killed")
 }
 
 func TestParseTraceRecordsParsesCommaRowsInSourceOrder(t *testing.T) {
@@ -1299,11 +1444,7 @@ func TestParseTraceRecordsRejectsMissingHeaderClearly(t *testing.T) {
 	if got != nil {
 		t.Fatalf("records on error = %#v, want nil", got)
 	}
-	for _, want := range []string{"parse trace records", "header"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
-		}
-	}
+	assertErrorContainsAll(t, err, "parse trace records", "header")
 }
 
 func TestParseTraceRecordsRejectsMalformedHeadersClearly(t *testing.T) {
@@ -1333,11 +1474,7 @@ func TestParseTraceRecordsRejectsMalformedHeadersClearly(t *testing.T) {
 			if got != nil {
 				t.Fatalf("records on error = %#v, want nil", got)
 			}
-			for _, want := range tt.want {
-				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
-				}
-			}
+			assertErrorContainsAll(t, err, tt.want...)
 		})
 	}
 }
@@ -1357,11 +1494,7 @@ func TestParseTraceRecordsRejectsMalformedRowsClearly(t *testing.T) {
 	if got != nil {
 		t.Fatalf("records on error = %#v, want nil", got)
 	}
-	for _, want := range []string{"row 2", "wrong number"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
-		}
-	}
+	assertErrorContainsAll(t, err, "row 2", "wrong number")
 }
 
 func TestParseTraceRecordsRejectsUnsupportedDelimiter(t *testing.T) {
@@ -1372,7 +1505,16 @@ func TestParseTraceRecordsRejectsUnsupportedDelimiter(t *testing.T) {
 	if got != nil {
 		t.Fatalf("records on error = %#v, want nil", got)
 	}
-	for _, want := range []string{"unsupported delimiter", ",", "tab"} {
+	assertErrorContainsAll(t, err, "unsupported delimiter", ",", "tab")
+}
+
+func assertErrorContainsAll(t *testing.T, err error, wants ...string) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatalf("error = nil, want it to mention %#v", wants)
+	}
+	for _, want := range wants {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error = %q, want it to mention %q", err.Error(), want)
 		}

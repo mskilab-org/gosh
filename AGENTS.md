@@ -13,4 +13,6 @@ htdp.transparent: false
 
 - Build command: `go build ./...`
 - Test command: `go test ./...`
+- When building runnable binaries for manual validation, write them under `build/` (for example `build/gosh` or `build/gosh-linux-amd64`); do not create root-level binaries.
+- After every repository change, rebuild with `go build ./...` before reporting completion.
 - After changing Go source, tests, docs with Go-backed tests, or module files, rebuild and test with `go build ./... && go test ./...` before reporting completion.

@@ -323,6 +323,84 @@ func TestParseLogOnlyTaskEvidenceEnrichesLifecycleHashWorkdir(t *testing.T) {
 	}
 }
 
+func TestParseLogOnlyTaskEvidenceResolvesShortLifecycleHashToLongWorkdir(t *testing.T) {
+	runPath := t.TempDir()
+	workdir := filepath.Join(runPath, "work", "9e", "c300c50150c213c2d44ca9e4624d8c")
+	if err := os.MkdirAll(workdir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) returned error: %v", workdir, err)
+	}
+	if err := os.WriteFile(filepath.Join(workdir, ".exitcode"), []byte("137\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(.exitcode) returned error: %v", err)
+	}
+	commandErr := "fatal error from prefix-resolved lifecycle workdir"
+	if err := os.WriteFile(filepath.Join(workdir, string(domain.CommandFileErr)), []byte(commandErr), 0o644); err != nil {
+		t.Fatalf("WriteFile(.command.err) returned error: %v", err)
+	}
+
+	// A same-suffix directory in a different shard must not be considered; only work/9e is relevant.
+	unreferencedWorkdir := filepath.Join(runPath, "work", "00", "c300c50150c213c2d44ca9e4624d8c")
+	if err := os.MkdirAll(unreferencedWorkdir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q) returned error: %v", unreferencedWorkdir, err)
+	}
+	if err := os.WriteFile(filepath.Join(unreferencedWorkdir, ".exitcode"), []byte("99\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(unreferenced .exitcode) returned error: %v", err)
+	}
+
+	logPath := filepath.Join(runPath, ".nextflow.log")
+	content := strings.Join([]string{
+		"Apr-28 12:00:30.000 [Task monitor] ERROR nextflow.processor.TaskPollingMonitor - [9e/c300c5] failed process > PIPE:STEP (sample)",
+		"",
+	}, "\n")
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) returned error: %v", logPath, err)
+	}
+
+	got, err := ParseLogOnlyTaskEvidence(context.Background(), domain.RunDir{Path: runPath}, domain.SourceFingerprint{Kind: domain.SourceKindLog, Path: logPath})
+	if err != nil {
+		t.Fatalf("ParseLogOnlyTaskEvidence returned error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("ParseLogOnlyTaskEvidence returned %d rows, want one lifecycle evidence row: %#v", len(got), got)
+	}
+
+	evidence := got[0]
+	if evidence.ID != "9e/c300c5" || evidence.Workdir != filepath.Clean(workdir) {
+		t.Fatalf("ID/Workdir = %q/%q, want 9e/c300c5/%q", evidence.ID, evidence.Workdir, filepath.Clean(workdir))
+	}
+	if evidence.ObservedStatus != domain.TaskStatusFailed || evidence.Process != "PIPE:STEP" || evidence.Name != "sample" {
+		t.Fatalf("status/process/name = %q/%q/%q, want FAILED/PIPE:STEP/sample", evidence.ObservedStatus, evidence.Process, evidence.Name)
+	}
+	if evidence.Exit == nil || *evidence.Exit != 137 {
+		if evidence.Exit == nil {
+			t.Fatalf("Exit = nil, want 137 from prefix-resolved .exitcode")
+		}
+		t.Fatalf("Exit = %d, want 137 from prefix-resolved .exitcode", *evidence.Exit)
+	}
+	if evidence.ErrorBlock != commandErr || evidence.ErrorSummary != commandErr {
+		t.Fatalf("ErrorBlock/ErrorSummary = %q/%q, want bounded command error %q", evidence.ErrorBlock, evidence.ErrorSummary, commandErr)
+	}
+	if !evidence.CommandFilesAvailable {
+		t.Fatalf("CommandFilesAvailable = false, want true for prefix-resolved workdir command evidence")
+	}
+	for _, wantPath := range []string{filepath.Clean(workdir), filepath.Join(workdir, ".exitcode"), filepath.Join(workdir, string(domain.CommandFileErr))} {
+		found := false
+		for _, source := range evidence.Sources {
+			if source.Path == wantPath {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("Sources = %#v, want source path %q", evidence.Sources, wantPath)
+		}
+	}
+	for _, source := range evidence.Sources {
+		if strings.Contains(source.Path, unreferencedWorkdir) {
+			t.Fatalf("Sources = %#v, should not include unreferenced shard workdir %q", evidence.Sources, unreferencedWorkdir)
+		}
+	}
+}
+
 func TestParseLogOnlyTaskEvidenceKeepsFinalFailureOnlyEvidence(t *testing.T) {
 	runPath := t.TempDir()
 	logPath := filepath.Join(runPath, ".nextflow.log")

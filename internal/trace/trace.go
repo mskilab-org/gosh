@@ -577,6 +577,53 @@ func DeriveCanonicalTaskID(rawWorkdir string) (string, error) {
 	return "", fmt.Errorf("derive canonical task id: unable to parse workdir/hash value %q as full workdir path, direct xx/rest id, or unsplit hash", rawWorkdir)
 }
 
+func resolveHashPrefixWorkdir(runDir domain.RunDir, canonicalID string) (string, error) {
+	canonical, ok := NormalizeCanonicalTaskID(canonicalID)
+	if !ok {
+		return "", fmt.Errorf("resolve hash prefix workdir: invalid canonical id %q", canonicalID)
+	}
+	if strings.TrimSpace(runDir.Path) == "" {
+		return "", nil
+	}
+
+	idParts := strings.Split(canonical, "/")
+	shard := filepath.Join(runDir.Path, "work", idParts[0])
+	entries, err := os.ReadDir(shard)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("resolve hash prefix workdir: read shard %q for canonical id %q: %w", shard, canonical, err)
+	}
+
+	matches := make([]string, 0, 1)
+	remainingPrefix := idParts[1]
+	for _, entry := range entries {
+		if !strings.HasPrefix(strings.ToLower(entry.Name()), remainingPrefix) {
+			continue
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			return "", fmt.Errorf("resolve hash prefix workdir: stat entry %q in shard %q for canonical id %q: %w", entry.Name(), shard, canonical, err)
+		}
+		if !info.IsDir() {
+			continue
+		}
+
+		matches = append(matches, filepath.Join(shard, entry.Name()))
+	}
+
+	if len(matches) == 0 {
+		return "", nil
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("resolve hash prefix workdir: ambiguous canonical id %q in shard %q: %d matching directories (%s)", canonical, shard, len(matches), strings.Join(matches, ", "))
+	}
+
+	return filepath.Clean(matches[0]), nil
+}
+
 func ResolveTaskWorkdir(runDir domain.RunDir, canonicalID string, rawWorkdir string) (string, error) {
 	cleanPath := func(value string) string {
 		return filepath.Clean(strings.ReplaceAll(value, "\\", string(filepath.Separator)))
@@ -692,24 +739,11 @@ func ResolveTaskWorkdir(runDir domain.RunDir, canonicalID string, rawWorkdir str
 		return "", nil
 	}
 
-	idParts := strings.Split(canonical, "/")
-	if len(idParts) != 2 {
-		return "", fmt.Errorf("resolve task workdir: invalid canonical id %q", canonicalID)
-	}
-
-	candidate := filepath.Join(runDir.Path, "work", idParts[0], idParts[1])
-	info, err := os.Stat(candidate)
+	workdir, err := resolveHashPrefixWorkdir(runDir, canonical)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", fmt.Errorf("resolve task workdir: stat derived workdir %q: %w", candidate, err)
+		return "", fmt.Errorf("resolve task workdir: %w", err)
 	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("resolve task workdir: derived workdir %q is not a directory", candidate)
-	}
-
-	return filepath.Clean(candidate), nil
+	return workdir, nil
 }
 
 func ParseNullableExit(raw string) (*int, error) {

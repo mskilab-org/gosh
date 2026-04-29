@@ -804,6 +804,47 @@ func TestCheckFreshnessReportsFreshWhenModeAndFingerprintsMatch(t *testing.T) {
 	}
 }
 
+func TestCheckFreshnessReportsStaleWhenSchemaVersionChanges(t *testing.T) {
+	store, cleanup := openTempSQLiteStore(t)
+	defer cleanup()
+
+	if err := InitializeSchema(context.Background(), store); err != nil {
+		t.Fatalf("InitializeSchema() returned error: %v", err)
+	}
+
+	builtAt := time.Date(2024, time.April, 6, 7, 8, 9, 0, time.UTC)
+	traceModTime := time.Date(2024, time.April, 6, 8, 9, 10, 0, time.UTC)
+	traceSource := domain.SourceFingerprint{Kind: domain.SourceKindTrace, Path: "/runs/old-schema/trace.txt", ModTime: traceModTime, Size: 123}
+
+	if err := WriteMetadata(context.Background(), store, domain.IndexMetadata{
+		SchemaVersion: 1,
+		RunDir:        "/runs/old-schema",
+		IndexPath:     store.Path,
+		Mode:          domain.IndexModeTraceBacked,
+		Trace:         &traceSource,
+		BuiltAt:       builtAt,
+		Freshness:     domain.IndexFreshnessFresh,
+		TaskCount:     1,
+	}); err != nil {
+		t.Fatalf("WriteMetadata() returned error: %v", err)
+	}
+
+	freshness, reason, err := CheckFreshness(context.Background(), store, domain.ArtifactSet{
+		RunDir: domain.RunDir{Path: "/runs/old-schema"},
+		Mode:   domain.IndexModeTraceBacked,
+		Trace:  &traceSource,
+	})
+	if err != nil {
+		t.Fatalf("CheckFreshness(old schema version) returned error: %v", err)
+	}
+	if freshness != domain.IndexFreshnessStale {
+		t.Fatalf("freshness = %q, want %q", freshness, domain.IndexFreshnessStale)
+	}
+	if reason != "index schema version changed" {
+		t.Fatalf("reason = %q, want %q", reason, "index schema version changed")
+	}
+}
+
 func TestCheckFreshnessReportsStaleWhenModeChanges(t *testing.T) {
 	store, cleanup := openTempSQLiteStore(t)
 	defer cleanup()
@@ -1471,6 +1512,93 @@ func TestEnsureFreshIndexUsesFreshMetadataWithoutReparsingTrace(t *testing.T) {
 	}
 	if len(gotTasks) != 1 || gotTasks[0].ID != "aa/111111" || gotTasks[0].Status != domain.TaskStatusCompleted {
 		t.Fatalf("tasks after fresh EnsureFreshIndex() = %#v, want original completed task", gotTasks)
+	}
+}
+
+func TestEnsureFreshIndexRebuildsOldSchemaVersionTraceBackedIndex(t *testing.T) {
+	runDir := domain.RunDir{Path: t.TempDir()}
+	resolvedWorkdir := filepath.Join(runDir.Path, "work", "9e", "c300c50150c213c2d44ca9e4624d8c")
+	if err := os.MkdirAll(resolvedWorkdir, 0o755); err != nil {
+		t.Fatalf("create prefix-resolved workdir: %v", err)
+	}
+	traceSource := writeTraceSource(t, runDir, "trace.csv", []string{
+		"hash,status,process,name,tag,workdir,exit,duration,realtime,cpus,memory",
+		"9e/c300c5,FAILED,CALL,CALL (tumor),tumor,,137,2m,120s,4,8 GB",
+		"",
+	})
+	artifacts := domain.ArtifactSet{RunDir: runDir, Mode: domain.IndexModeTraceBacked, Trace: &traceSource}
+
+	seedStore, err := OpenStore(context.Background(), runDir)
+	if err != nil {
+		t.Fatalf("OpenStore(seed) returned error: %v", err)
+	}
+	if err := InitializeSchema(context.Background(), seedStore); err != nil {
+		_ = seedStore.Close()
+		t.Fatalf("InitializeSchema(seed) returned error: %v", err)
+	}
+	exitCode := 137
+	if err := InsertTasks(context.Background(), seedStore, []domain.Task{{
+		RowOrder: 1,
+		ID:       "9e/c300c5",
+		Status:   domain.TaskStatusFailed,
+		Process:  "CALL",
+		Name:     "CALL (tumor)",
+		Tag:      "tumor",
+		Workdir:  "",
+		Exit:     &exitCode,
+		Duration: "2m",
+		Realtime: "120s",
+		CPUs:     "4",
+		Memory:   "8 GB",
+	}}); err != nil {
+		_ = seedStore.Close()
+		t.Fatalf("InsertTasks(seed old row) returned error: %v", err)
+	}
+	if err := WriteMetadata(context.Background(), seedStore, domain.IndexMetadata{
+		SchemaVersion: 1,
+		RunDir:        runDir.Path,
+		IndexPath:     seedStore.Path,
+		Mode:          domain.IndexModeTraceBacked,
+		Trace:         &traceSource,
+		BuiltAt:       time.Date(2024, time.April, 7, 8, 9, 10, 0, time.UTC),
+		Freshness:     domain.IndexFreshnessFresh,
+		TaskCount:     1,
+	}); err != nil {
+		_ = seedStore.Close()
+		t.Fatalf("WriteMetadata(seed old version) returned error: %v", err)
+	}
+	if err := seedStore.Close(); err != nil {
+		t.Fatalf("close seed store: %v", err)
+	}
+
+	store, metadata, err := EnsureFreshIndex(context.Background(), runDir, artifacts)
+	if err != nil {
+		t.Fatalf("EnsureFreshIndex(old schema version) returned error: %v", err)
+	}
+	if store == nil {
+		t.Fatalf("EnsureFreshIndex() store = nil, want open store")
+	}
+	defer store.Close()
+
+	if metadata.SchemaVersion != SchemaVersion {
+		t.Fatalf("SchemaVersion = %d, want %d", metadata.SchemaVersion, SchemaVersion)
+	}
+	if metadata.TaskCount != 1 {
+		t.Fatalf("TaskCount = %d, want 1 rebuilt task", metadata.TaskCount)
+	}
+	if metadata.Freshness != domain.IndexFreshnessFresh || metadata.StaleReason != "" {
+		t.Fatalf("Freshness/StaleReason = %q/%q, want fresh with empty reason", metadata.Freshness, metadata.StaleReason)
+	}
+
+	gotTasks, err := QueryTasks(context.Background(), store, domain.TaskQuery{})
+	if err != nil {
+		t.Fatalf("QueryTasks() after old-version EnsureFreshIndex() returned error: %v", err)
+	}
+	if len(gotTasks) != 1 {
+		t.Fatalf("tasks after old-version EnsureFreshIndex() = %#v, want one rebuilt task", gotTasks)
+	}
+	if gotTasks[0].ID != "9e/c300c5" || gotTasks[0].Workdir != filepath.Clean(resolvedWorkdir) {
+		t.Fatalf("rebuilt task ID/Workdir = %q/%q, want 9e/c300c5/%q", gotTasks[0].ID, gotTasks[0].Workdir, filepath.Clean(resolvedWorkdir))
 	}
 }
 
