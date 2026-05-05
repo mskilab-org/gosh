@@ -608,6 +608,157 @@ func TestLoadCommandContextWithResultsDirRejectsUnsupportedFormat(t *testing.T) 
 	assertNoIndexCacheDir(t, runRoot)
 }
 
+func TestLoadCommandContextWithResultsDirUsesConfiguredResultsDirForPipelineInfoTrace(t *testing.T) {
+	workspace := t.TempDir()
+	runRoot := filepath.Join(workspace, "runs", "nf-run")
+	resultsRoot := filepath.Join(workspace, "external-results")
+	pipelineInfoRoot := filepath.Join(resultsRoot, run.PipelineInfoDirName)
+	for _, dir := range []string{runRoot, pipelineInfoRoot} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir fixture directory %q: %v", dir, err)
+		}
+	}
+
+	logPath := filepath.Join(runRoot, ".nextflow.log")
+	if err := os.WriteFile(logPath, []byte("ERROR ~ Error executing process > 'LOG:ONLY (should-not-drive-inspect)'\n"), 0o644); err != nil {
+		t.Fatalf("write log fixture: %v", err)
+	}
+	tracePath := filepath.Join(pipelineInfoRoot, "execution_trace_2026-05-05.csv")
+	if err := os.WriteFile(tracePath, []byte("task_id\n"), 0o644); err != nil {
+		t.Fatalf("write pipeline-info trace fixture: %v", err)
+	}
+
+	got, err := loadCommandContextWithResultsDir(context.Background(), GlobalOptions{
+		RunDir:     runRoot,
+		ResultsDir: resultsRoot,
+		Format:     domain.OutputFormatJSON,
+	})
+	if err != nil {
+		t.Fatalf("loadCommandContextWithResultsDir(configured results dir) returned error: %v", err)
+	}
+
+	if got.RunDir.Path != runRoot {
+		t.Fatalf("RunDir.Path = %q, want %q", got.RunDir.Path, runRoot)
+	}
+	if got.ResultsDir.Path != resultsRoot {
+		t.Fatalf("ResultsDir.Path = %q, want configured %q", got.ResultsDir.Path, resultsRoot)
+	}
+	if got.Format != domain.OutputFormatJSON {
+		t.Fatalf("Format = %q, want %q", got.Format, domain.OutputFormatJSON)
+	}
+	if got.Artifacts.Mode != domain.IndexModeTraceBacked {
+		t.Fatalf("Artifacts.Mode = %q, want %q", got.Artifacts.Mode, domain.IndexModeTraceBacked)
+	}
+	if got.Artifacts.Trace == nil || got.Artifacts.Trace.Path != tracePath {
+		t.Fatalf("Artifacts.Trace = %+v, want selected pipeline-info trace %q", got.Artifacts.Trace, tracePath)
+	}
+	if got.Artifacts.Log == nil || got.Artifacts.Log.Path != logPath {
+		t.Fatalf("Artifacts.Log = %+v, want selected log %q", got.Artifacts.Log, logPath)
+	}
+	assertNoIndexCacheDir(t, runRoot)
+}
+
+func TestLoadCommandContextWithResultsDirResolvesRelativeResultsDirAgainstRunDir(t *testing.T) {
+	workspace := t.TempDir()
+	runRoot := filepath.Join(workspace, "runs", "nf-run")
+	cwd := filepath.Join(workspace, "cwd")
+	pipelineInfoRoot := filepath.Join(runRoot, "relative-results", run.PipelineInfoDirName)
+	for _, dir := range []string{runRoot, cwd, pipelineInfoRoot} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir fixture directory %q: %v", dir, err)
+		}
+	}
+	t.Chdir(cwd)
+
+	tracePath := filepath.Join(pipelineInfoRoot, "execution_trace_2026-05-05.tsv")
+	if err := os.WriteFile(tracePath, []byte("task_id\n"), 0o644); err != nil {
+		t.Fatalf("write pipeline-info trace fixture: %v", err)
+	}
+
+	got, err := loadCommandContextWithResultsDir(context.Background(), GlobalOptions{
+		RunDir:     filepath.Join("..", "runs", "nf-run"),
+		ResultsDir: "relative-results",
+	})
+	if err != nil {
+		t.Fatalf("loadCommandContextWithResultsDir(relative results dir) returned error: %v", err)
+	}
+
+	wantRunDir := filepath.Clean(runRoot)
+	wantResultsDir := filepath.Join(wantRunDir, "relative-results")
+	if got.RunDir.Path != wantRunDir {
+		t.Fatalf("RunDir.Path = %q, want %q", got.RunDir.Path, wantRunDir)
+	}
+	if got.ResultsDir.Path != wantResultsDir {
+		t.Fatalf("ResultsDir.Path = %q, want relative to run dir %q", got.ResultsDir.Path, wantResultsDir)
+	}
+	if got.Format != domain.OutputFormatHuman {
+		t.Fatalf("Format = %q, want default %q", got.Format, domain.OutputFormatHuman)
+	}
+	if got.Artifacts.Mode != domain.IndexModeTraceBacked {
+		t.Fatalf("Artifacts.Mode = %q, want %q", got.Artifacts.Mode, domain.IndexModeTraceBacked)
+	}
+	if got.Artifacts.Trace == nil || got.Artifacts.Trace.Path != tracePath {
+		t.Fatalf("Artifacts.Trace = %+v, want selected pipeline-info trace %q", got.Artifacts.Trace, tracePath)
+	}
+	wantPipelineInfo := filepath.Join(wantResultsDir, run.PipelineInfoDirName)
+	if len(got.Artifacts.SearchLocations) < 2 || got.Artifacts.SearchLocations[1].BaseDir != wantPipelineInfo {
+		t.Fatalf("pipeline-info search location = %+v, want base dir %q", got.Artifacts.SearchLocations, wantPipelineInfo)
+	}
+	assertNoIndexCacheDir(t, wantRunDir)
+}
+
+func TestUnsupportedArtifactDiagnosticsForCommandUsesArtifactDiagnostics(t *testing.T) {
+	runDir := domain.RunDir{Path: "/tmp/nf-run"}
+	artifactDiagnostics := []domain.Diagnostic{
+		{Severity: domain.DiagnosticError, Code: "custom_missing", Message: "custom missing artifacts", Detail: "custom detail"},
+		{Severity: domain.DiagnosticInfo, Code: "custom_hint", Message: "custom hint", Detail: "custom hint detail"},
+	}
+	artifacts := domain.ArtifactSet{
+		Diagnostics:     artifactDiagnostics,
+		SearchLocations: run.BuildArtifactSearchLocations(runDir, domain.ResultsDir{Path: "/tmp/custom-results"}),
+	}
+
+	got := unsupportedArtifactDiagnosticsForCommand(runDir, artifacts)
+
+	if !reflect.DeepEqual(got, artifactDiagnostics) {
+		t.Fatalf("unsupportedArtifactDiagnosticsForCommand(custom diagnostics) = %+v, want %+v", got, artifactDiagnostics)
+	}
+}
+
+func TestUnsupportedArtifactDiagnosticsForCommandDerivesFromSearchLocations(t *testing.T) {
+	workspace := t.TempDir()
+	runRoot := filepath.Join(workspace, "runs", "nf-run")
+	resultsRoot := filepath.Join(workspace, "custom-results")
+	runDir := domain.RunDir{Path: runRoot}
+	locations := run.BuildArtifactSearchLocations(runDir, domain.ResultsDir{Path: resultsRoot})
+	artifacts := domain.ArtifactSet{SearchLocations: locations}
+
+	got := unsupportedArtifactDiagnosticsForCommand(runDir, artifacts)
+
+	want := run.UnsupportedArtifactDiagnosticsFromSearchLocations(runDir, locations)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unsupportedArtifactDiagnosticsForCommand(search locations) = %+v, want %+v", got, want)
+	}
+	if !strings.Contains(got[0].Detail, filepath.Join(resultsRoot, run.PipelineInfoDirName)) {
+		t.Fatalf("diagnostic detail = %q, want custom pipeline_info search location", got[0].Detail)
+	}
+}
+
+func TestUnsupportedArtifactDiagnosticsForCommandFallsBackToDefaults(t *testing.T) {
+	runDir := domain.RunDir{Path: t.TempDir()}
+	artifacts := domain.ArtifactSet{}
+
+	got := unsupportedArtifactDiagnosticsForCommand(runDir, artifacts)
+
+	want := run.UnsupportedArtifactDiagnostics(runDir)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unsupportedArtifactDiagnosticsForCommand(empty artifacts) = %+v, want %+v", got, want)
+	}
+	if !strings.Contains(got[0].Detail, filepath.Join(runDir.Path, run.DefaultResultsDirName, run.PipelineInfoDirName)) {
+		t.Fatalf("diagnostic detail = %q, want default pipeline_info search location", got[0].Detail)
+	}
+}
+
 func TestRunStatusTraceBackedRebuildsIndexAndSummarizesFailedLikeTasks(t *testing.T) {
 	runDir := t.TempDir()
 	failedWorkdir := filepath.Join(runDir, "work", "bb", "222222")
@@ -1239,6 +1390,77 @@ func TestRunInspectTraceBackedExactInventoriesCommandFilesWithoutExecuting(t *te
 	}
 	if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
 		t.Fatalf("command file sentinel stat error = %v, want command files to be inventoried but not executed", err)
+	}
+}
+
+func TestRunInspectPrefersCustomResultsDirPipelineInfoTraceOverSelectedLog(t *testing.T) {
+	runDir := t.TempDir()
+	resultsDir := filepath.Join(runDir, "custom-results")
+	pipelineInfoRoot := filepath.Join(resultsDir, run.PipelineInfoDirName)
+	traceWorkdir := filepath.Join(runDir, "work", "ff", "666666")
+	for _, dir := range []string{pipelineInfoRoot, traceWorkdir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("create inspect fixture dir %s: %v", dir, err)
+		}
+	}
+
+	if err := os.WriteFile(filepath.Join(traceWorkdir, ".command.sh"), []byte("#!/usr/bin/env bash\necho custom inspect\n"), 0o644); err != nil {
+		t.Fatalf("write command fixture: %v", err)
+	}
+
+	logPath := filepath.Join(runDir, ".nextflow.log")
+	logContent := strings.Join([]string{
+		"ERROR ~ Error executing process > 'LOG:ONLY (should-not-drive-inspect)'",
+		"",
+		"Command error:",
+		"  log-only fallback should not be used when a custom pipeline-info trace exists",
+		"",
+	}, "\n")
+	if err := os.WriteFile(logPath, []byte(logContent), 0o644); err != nil {
+		t.Fatalf("write log fixture: %v", err)
+	}
+
+	tracePath := filepath.Join(pipelineInfoRoot, "execution_trace_inspect.csv")
+	traceContent := strings.Join([]string{
+		"hash,status,process,name,tag,workdir,exit,duration,realtime,cpus,memory",
+		"FF/666666,FAILED,TRACE:INSPECT,TRACE:INSPECT (tumor-01),tumor-01," + traceWorkdir + ",1,5m,300s,2,6 GB",
+		"",
+	}, "\n")
+	if err := os.WriteFile(tracePath, []byte(traceContent), 0o644); err != nil {
+		t.Fatalf("write pipeline-info trace fixture: %v", err)
+	}
+
+	var output strings.Builder
+	err := RunInspect(context.Background(), InspectOptions{
+		Global:   GlobalOptions{RunDir: runDir, ResultsDir: "custom-results", Format: domain.OutputFormatHuman},
+		Selector: "ff/666666",
+	}, &output)
+	if err != nil {
+		t.Fatalf("RunInspect(custom pipeline-info trace) returned error: %v", err)
+	}
+
+	got := output.String()
+	for _, want := range []string{
+		"selector: ff/666666",
+		"resolution: exact",
+		"task:",
+		"id: ff/666666",
+		"status: FAILED",
+		"process: TRACE:INSPECT",
+		traceWorkdir,
+		"command_files:",
+		"kind=.command.sh path=" + filepath.Join(traceWorkdir, ".command.sh") + " exists=true",
+		"echo custom inspect",
+		"selector_exact",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("RunInspect(custom pipeline-info trace) output = %q, want it to contain %q", got, want)
+		}
+	}
+	for _, notWant := range []string{"log_only_partial", "log-only inspect is partial", "LOG:ONLY", "should-not-drive-inspect"} {
+		if strings.Contains(got, notWant) {
+			t.Fatalf("RunInspect(custom pipeline-info trace) output = %q, did not want log-only marker %q", got, notWant)
+		}
 	}
 }
 

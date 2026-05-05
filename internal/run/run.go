@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/mskilab-org/gosh/internal/domain"
@@ -208,7 +209,7 @@ func DiscoverArtifactsWithResultsDir(ctx context.Context, runDir domain.RunDir, 
 	}
 
 	artifacts.Mode = domain.IndexModeUnsupported
-	artifacts.Diagnostics = UnsupportedArtifactDiagnostics(runDir)
+	artifacts.Diagnostics = UnsupportedArtifactDiagnosticsFromSearchLocations(runDir, searchLocations)
 	return artifacts, nil
 }
 
@@ -307,61 +308,56 @@ func ChooseNewestSource(sources []domain.SourceFingerprint) (*domain.SourceFinge
 	return &selected, nil
 }
 
-func UnsupportedArtifactDiagnostics(runDir domain.RunDir) []domain.Diagnostic {
-	joinPatterns := func(patterns []string) string {
-		if len(patterns) == 0 {
-			return ""
-		}
-
-		joined := patterns[0]
-		for _, pattern := range patterns[1:] {
-			joined += ", " + pattern
-		}
-		return joined
-	}
-	formatLocations := func(locations []domain.ArtifactSearchLocation) string {
-		if len(locations) == 0 {
-			return ""
-		}
-
-		formatted := ""
-		for i, location := range locations {
-			if i > 0 {
-				formatted += "\n"
-			}
-			formatted += "- " + location.BaseDir
-			if location.Description != "" {
-				formatted += " (" + location.Description + ")"
-			}
-			formatted += ": " + joinPatterns(location.Patterns)
-		}
-		return formatted
-	}
-
-	resultsDir, err := ResolveResultsDir(runDir, "")
-	if err != nil {
-		resultsDir = domain.ResultsDir{Path: filepath.Join(runDir.Path, DefaultResultsDirName)}
-	}
-	locations := BuildArtifactSearchLocations(runDir, resultsDir)
-	traceLocations := make([]domain.ArtifactSearchLocation, 0)
-	logLocations := make([]domain.ArtifactSearchLocation, 0)
-	for _, location := range locations {
-		switch location.Kind {
-		case domain.SourceKindTrace:
-			traceLocations = append(traceLocations, location)
-		case domain.SourceKindLog:
-			logLocations = append(logLocations, location)
-		}
-	}
+func UnsupportedArtifactDiagnosticsFromSearchLocations(runDir domain.RunDir, searchLocations []domain.ArtifactSearchLocation) []domain.Diagnostic {
+	traceLocations := ArtifactSearchLocationsByKind(searchLocations, domain.SourceKindTrace)
+	logLocations := ArtifactSearchLocationsByKind(searchLocations, domain.SourceKindLog)
 
 	return []domain.Diagnostic{
 		{
 			Severity: domain.DiagnosticError,
 			Code:     "unsupported_artifacts",
 			Message:  "No supported Nextflow trace or log artifacts found in " + runDir.Path,
-			Detail: "Searched trace locations:\n" + formatLocations(traceLocations) + "\n" +
-				"Searched log locations:\n" + formatLocations(logLocations),
+			Detail: "Searched trace locations:\n" + FormatArtifactSearchLocations(traceLocations) + "\n" +
+				"Searched log locations:\n" + FormatArtifactSearchLocations(logLocations),
 		},
 		domain.NextflowTraceRecommendationDiagnostic(),
 	}
+}
+
+func ArtifactSearchLocationsByKind(searchLocations []domain.ArtifactSearchLocation, kind domain.SourceKind) []domain.ArtifactSearchLocation {
+	matchingLocations := make([]domain.ArtifactSearchLocation, 0, len(searchLocations))
+	for _, location := range searchLocations {
+		if location.Kind == kind {
+			matchingLocations = append(matchingLocations, location)
+		}
+	}
+	return matchingLocations
+}
+
+func FormatArtifactSearchLocations(searchLocations []domain.ArtifactSearchLocation) string {
+	if len(searchLocations) == 0 {
+		return ""
+	}
+
+	formatted := ""
+	for i, location := range searchLocations {
+		if i > 0 {
+			formatted += "\n"
+		}
+		formatted += "- " + location.BaseDir
+		if location.Description != "" {
+			formatted += " (" + location.Description + ")"
+		}
+		formatted += ": " + strings.Join(location.Patterns, ", ")
+	}
+	return formatted
+}
+
+func UnsupportedArtifactDiagnostics(runDir domain.RunDir) []domain.Diagnostic {
+	resultsDir, err := ResolveResultsDir(runDir, "")
+	if err != nil {
+		resultsDir = domain.ResultsDir{Path: filepath.Join(runDir.Path, DefaultResultsDirName)}
+	}
+	locations := BuildArtifactSearchLocations(runDir, resultsDir)
+	return UnsupportedArtifactDiagnosticsFromSearchLocations(runDir, locations)
 }

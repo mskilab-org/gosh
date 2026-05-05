@@ -408,6 +408,18 @@ func diagnosticsWithTraceRecommendation(artifacts domain.ArtifactSet, diagnostic
 	return append(diagnostics, diagnostic, nextflowTraceRecommendation())
 }
 
+func unsupportedArtifactDiagnosticsForCommand(runDir domain.RunDir, artifacts domain.ArtifactSet) []domain.Diagnostic {
+	if len(artifacts.Diagnostics) > 0 {
+		diagnostics := make([]domain.Diagnostic, len(artifacts.Diagnostics))
+		copy(diagnostics, artifacts.Diagnostics)
+		return diagnostics
+	}
+	if len(artifacts.SearchLocations) > 0 {
+		return run.UnsupportedArtifactDiagnosticsFromSearchLocations(runDir, artifacts.SearchLocations)
+	}
+	return run.UnsupportedArtifactDiagnostics(runDir)
+}
+
 func diagnosticsForUnsupportedArtifacts(runDir domain.RunDir, artifacts domain.ArtifactSet, diagnostic domain.Diagnostic) []domain.Diagnostic {
 	diagnostics := append([]domain.Diagnostic{}, artifacts.Diagnostics...)
 	if len(diagnostics) == 0 {
@@ -827,7 +839,7 @@ func RunInspect(ctx context.Context, options InspectOptions, writer io.Writer) e
 		inspectSnippetMaxLines       = 80
 	)
 
-	command, err := loadCommandContext(ctx, options.Global)
+	command, err := loadCommandContextWithResultsDir(ctx, options.Global)
 	if err != nil {
 		return err
 	}
