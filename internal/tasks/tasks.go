@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mskilab-org/gosh/internal/domain"
+	"github.com/mskilab-org/gosh/internal/pipeline"
 	"github.com/mskilab-org/gosh/internal/trace"
 )
 
@@ -47,7 +48,7 @@ func NormalizeTaskQuery(query domain.TaskQuery) (domain.TaskQuery, error) {
 	return normalized, nil
 }
 
-func ApplyTaskQuery(taskList []domain.Task, query domain.TaskQuery) ([]domain.Task, error) {
+func ApplyTaskQueryWithProfile(taskList []domain.Task, query domain.TaskQuery, profile pipeline.Profile) ([]domain.Task, error) {
 	normalized, err := NormalizeTaskQuery(query)
 	if err != nil {
 		return nil, err
@@ -68,9 +69,11 @@ func ApplyTaskQuery(taskList []domain.Task, query domain.TaskQuery) ([]domain.Ta
 		if !containsFold(task.Name, normalized.NameSubstring) {
 			continue
 		}
-		if normalized.SampleSubstring != "" &&
-			!containsFold(task.Name, normalized.SampleSubstring) &&
-			!containsFold(task.Tag, normalized.SampleSubstring) {
+		if normalized.SampleSubstring != "" && !pipeline.MatchSample(profile, pipeline.SampleMatchInput{
+			Query: normalized.SampleSubstring,
+			Name:  task.Name,
+			Tag:   task.Tag,
+		}) {
 			continue
 		}
 		if normalized.Status != "" && task.Status != normalized.Status {
@@ -85,6 +88,10 @@ func ApplyTaskQuery(taskList []domain.Task, query domain.TaskQuery) ([]domain.Ta
 	})
 
 	return matches, nil
+}
+
+func ApplyTaskQuery(taskList []domain.Task, query domain.TaskQuery) ([]domain.Task, error) {
+	return ApplyTaskQueryWithProfile(taskList, query, nil)
 }
 
 func BuildStatusSummary(runDir domain.RunDir, metadata domain.IndexMetadata, counts []domain.StatusCount, failedTasks []domain.Task) (domain.StatusSummary, error) {

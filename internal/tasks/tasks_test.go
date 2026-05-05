@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mskilab-org/gosh/internal/domain"
+	"github.com/mskilab-org/gosh/internal/pipeline"
 )
 
 func TestNormalizeTaskQueryTrimsTextFiltersWithoutChangingCase(t *testing.T) {
@@ -130,14 +131,14 @@ func TestApplyTaskQueryAppliesCaseInsensitiveProcessNameAndStatusFilters(t *test
 	}
 }
 
-func TestApplyTaskQueryAppliesSampleAliasToNameOrTagOnly(t *testing.T) {
+func TestApplyTaskQueryDefaultSampleMatchesNameOrTagOnly(t *testing.T) {
 	taskList := []domain.Task{
 		{RowOrder: 30, ID: "cc/333333", Process: "ALIGN_STAR", Name: "Sample-Tumor", Tag: "lane-a"},
 		{RowOrder: 10, ID: "aa/111111", Process: "ALIGN_STAR", Name: "sample-control", Tag: "Tumor-Replicate"},
 		{RowOrder: 20, ID: "bb/222222", Process: "TUMOR_PROCESS", Name: "control", Tag: "normal"},
 	}
 
-	got, err := ApplyTaskQuery(taskList, domain.TaskQuery{SampleSubstring: " tumor "})
+	got, err := ApplyTaskQuery(taskList, domain.TaskQuery{SampleSubstring: " TuMoR "})
 	if err != nil {
 		t.Fatalf("ApplyTaskQuery() returned error: %v", err)
 	}
@@ -166,6 +167,109 @@ func TestApplyTaskQueryRejectsUnknownStatusFilter(t *testing.T) {
 
 	assertErrorContains(t, err, "unknown task status")
 	assertErrorContains(t, err, "finished")
+}
+
+type taskQueryProfile struct {
+	matchingTags map[string]bool
+	sampleCalls  []pipeline.SampleMatchInput
+}
+
+func (p *taskQueryProfile) MatchSample(input pipeline.SampleMatchInput) bool {
+	p.sampleCalls = append(p.sampleCalls, input)
+	return p.matchingTags[input.Tag]
+}
+
+func (p *taskQueryProfile) ProcessView(input pipeline.ProcessViewInput) pipeline.ProcessView {
+	return pipeline.ProcessView{Display: input.Task.Process, Group: input.Task.Process}
+}
+
+func (p *taskQueryProfile) EnrichError(input pipeline.ErrorEnrichmentInput) (pipeline.ErrorEnrichment, error) {
+	return pipeline.ErrorEnrichment{
+		Task:            input.Task,
+		LogOnlyEvidence: input.LogOnlyEvidence,
+		Diagnostics:     input.Diagnostics,
+	}, nil
+}
+
+func TestApplyTaskQueryWithProfileRoutesSampleSubstringThroughProfile(t *testing.T) {
+	taskList := []domain.Task{
+		{RowOrder: 30, ID: "cc/333333", Process: "ALIGN_STAR", Name: "plain-a", Tag: "profile-yes"},
+		{RowOrder: 10, ID: "aa/111111", Process: "align_star", Name: "plain-b", Tag: "profile-yes"},
+		{RowOrder: 20, ID: "bb/222222", Process: "CALL_VARIANTS", Name: "plain-c", Tag: "profile-yes"},
+		{RowOrder: 40, ID: "dd/444444", Process: "ALIGN_STAR", Name: "Sample-Tumor", Tag: "profile-no"},
+	}
+	profile := &taskQueryProfile{matchingTags: map[string]bool{"profile-yes": true}}
+	query := domain.TaskQuery{ProcessSubstring: " align ", SampleSubstring: " tumor "}
+
+	got, err := ApplyTaskQueryWithProfile(taskList, query, profile)
+	if err != nil {
+		t.Fatalf("ApplyTaskQueryWithProfile() returned error: %v", err)
+	}
+
+	want := []domain.Task{taskList[1], taskList[0]}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ApplyTaskQueryWithProfile() = %#v, want %#v", got, want)
+	}
+
+	wantInput := pipeline.SampleMatchInput{Query: "tumor", Name: "plain-a", Tag: "profile-yes"}
+	if !sampleInputsContain(profile.sampleCalls, wantInput) {
+		t.Fatalf("profile sample calls = %#v, want call containing %#v", profile.sampleCalls, wantInput)
+	}
+}
+
+func TestApplyTaskQueryWithProfileBlankSampleDoesNotFilterThroughProfile(t *testing.T) {
+	taskList := []domain.Task{
+		{RowOrder: 20, ID: "bb/222222", Process: "ALIGN_STAR"},
+		{RowOrder: 10, ID: "aa/111111", Process: "ALIGN_STAR"},
+	}
+	profile := &taskQueryProfile{matchingTags: map[string]bool{}}
+
+	got, err := ApplyTaskQueryWithProfile(taskList, domain.TaskQuery{SampleSubstring: " \t\n "}, profile)
+	if err != nil {
+		t.Fatalf("ApplyTaskQueryWithProfile() returned error: %v", err)
+	}
+
+	want := []domain.Task{taskList[1], taskList[0]}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ApplyTaskQueryWithProfile() = %#v, want %#v", got, want)
+	}
+	if len(profile.sampleCalls) != 0 {
+		t.Fatalf("profile sample calls = %#v, want no calls for blank sample filter", profile.sampleCalls)
+	}
+}
+
+func TestApplyTaskQueryWithProfileFallsBackToDefaultSampleMatchingWhenProfileNil(t *testing.T) {
+	taskList := []domain.Task{
+		{RowOrder: 30, ID: "cc/333333", Process: "ALIGN_STAR", Name: "Sample-Tumor", Tag: "lane-a"},
+		{RowOrder: 10, ID: "aa/111111", Process: "ALIGN_STAR", Name: "sample-control", Tag: "Tumor-Replicate"},
+		{RowOrder: 20, ID: "bb/222222", Process: "TUMOR_PROCESS", Name: "control", Tag: "normal"},
+	}
+
+	got, err := ApplyTaskQueryWithProfile(taskList, domain.TaskQuery{SampleSubstring: " tumor "}, nil)
+	if err != nil {
+		t.Fatalf("ApplyTaskQueryWithProfile() returned error: %v", err)
+	}
+
+	want := []domain.Task{taskList[1], taskList[0]}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ApplyTaskQueryWithProfile() = %#v, want %#v", got, want)
+	}
+}
+
+func TestApplyTaskQueryWithProfileRejectsUnknownStatusFilter(t *testing.T) {
+	_, err := ApplyTaskQueryWithProfile(nil, domain.TaskQuery{StatusRaw: "finished"}, nil)
+
+	assertErrorContains(t, err, "unknown task status")
+	assertErrorContains(t, err, "finished")
+}
+
+func sampleInputsContain(inputs []pipeline.SampleMatchInput, want pipeline.SampleMatchInput) bool {
+	for _, input := range inputs {
+		if input == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMatchCanonicalIDMatchesExactCanonicalID(t *testing.T) {
