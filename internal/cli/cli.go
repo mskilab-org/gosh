@@ -747,7 +747,10 @@ func RunStatus(ctx context.Context, options StatusOptions, writer io.Writer) err
 		if err != nil {
 			return err
 		}
-		return renderStatus(summary)
+		if err := renderStatus(summary); err != nil {
+			return err
+		}
+		return logOnlyNoParseableEvidenceStatusError(summary)
 
 	case domain.IndexModeUnsupported:
 		diagnostics := artifacts.Diagnostics
@@ -762,6 +765,18 @@ func RunStatus(ctx context.Context, options StatusOptions, writer io.Writer) err
 	default:
 		return fmt.Errorf("status: unsupported artifact mode %q", artifacts.Mode)
 	}
+}
+
+func logOnlyNoParseableEvidenceStatusError(summary domain.StatusSummary) error {
+	for _, diagnostic := range summary.Diagnostics {
+		if diagnostic.Code == "log_only_no_parseable_evidence" {
+			if summary.RunDir.Path == "" {
+				return fmt.Errorf("status: no parseable evidence in selected Nextflow log")
+			}
+			return fmt.Errorf("status: no parseable evidence in selected Nextflow log for %s", summary.RunDir.Path)
+		}
+	}
+	return nil
 }
 
 func RunTasks(ctx context.Context, options TasksOptions, writer io.Writer) error {

@@ -876,6 +876,60 @@ func TestRunStatusPrefersCustomResultsDirPipelineInfoTraceOverSelectedLog(t *tes
 	}
 }
 
+func TestLogOnlyNoParseableEvidenceStatusError(t *testing.T) {
+	tests := []struct {
+		name        string
+		summary     domain.StatusSummary
+		wantErr     bool
+		wantErrText string
+	}{
+		{
+			name:    "nil diagnostics succeeds",
+			summary: domain.StatusSummary{RunDir: domain.RunDir{Path: "/runs/log-only"}},
+		},
+		{
+			name: "log-only diagnostics with parseable evidence succeed",
+			summary: domain.StatusSummary{
+				RunDir: domain.RunDir{Path: "/runs/log-only"},
+				Diagnostics: []domain.Diagnostic{
+					{Severity: domain.DiagnosticWarning, Code: "log_only_degraded", Message: "log-only status is degraded"},
+					{Severity: domain.DiagnosticInfo, Code: "nextflow_with_trace_recommended", Message: "run future workflows with -with-trace"},
+				},
+			},
+		},
+		{
+			name: "no parseable evidence diagnostic returns command error",
+			summary: domain.StatusSummary{
+				RunDir: domain.RunDir{Path: "/runs/log-only"},
+				Diagnostics: []domain.Diagnostic{
+					{Severity: domain.DiagnosticWarning, Code: "log_only_degraded", Message: "log-only status is degraded"},
+					{Severity: domain.DiagnosticError, Code: "log_only_no_parseable_evidence", Message: "No parseable task evidence found in selected Nextflow log"},
+				},
+			},
+			wantErr:     true,
+			wantErrText: "no parseable evidence",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := logOnlyNoParseableEvidenceStatusError(test.summary)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("logOnlyNoParseableEvidenceStatusError(%#v) returned nil error", test.summary)
+				}
+				if !strings.Contains(err.Error(), test.wantErrText) {
+					t.Fatalf("logOnlyNoParseableEvidenceStatusError(%#v) error = %q, want it to contain %q", test.summary, err.Error(), test.wantErrText)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("logOnlyNoParseableEvidenceStatusError(%#v) error = %v, want nil", test.summary, err)
+			}
+		})
+	}
+}
+
 func TestRunStatusLogOnlyRendersDegradedSummaryFromSelectedLog(t *testing.T) {
 	runDir := t.TempDir()
 	workdir := filepath.Join(runDir, "work", "ab", "c123def")
@@ -932,7 +986,7 @@ func TestRunStatusLogOnlyRendersDegradedSummaryFromSelectedLog(t *testing.T) {
 	assertNoIndexCacheDir(t, runDir)
 }
 
-func TestRunStatusLogOnlyWithoutParseableEvidenceStillRendersDegradedSummary(t *testing.T) {
+func TestRunStatusLogOnlyWithoutParseableEvidenceRendersSummaryAndReturnsCommandError(t *testing.T) {
 	runDir := t.TempDir()
 	logPath := filepath.Join(runDir, ".nextflow.log")
 	logContent := strings.Join([]string{
@@ -948,8 +1002,11 @@ func TestRunStatusLogOnlyWithoutParseableEvidenceStillRendersDegradedSummary(t *
 	err := RunStatus(context.Background(), StatusOptions{
 		Global: GlobalOptions{RunDir: runDir, Format: domain.OutputFormatHuman},
 	}, &output)
-	if err != nil {
-		t.Fatalf("RunStatus(log-only no failures) returned error: %v", err)
+	if err == nil {
+		t.Fatalf("RunStatus(log-only no evidence) returned nil error")
+	}
+	if !strings.Contains(err.Error(), "no parseable evidence") {
+		t.Fatalf("RunStatus(log-only no evidence) error = %q, want it to mention no parseable evidence", err.Error())
 	}
 
 	got := output.String()
@@ -963,6 +1020,50 @@ func TestRunStatusLogOnlyWithoutParseableEvidenceStillRendersDegradedSummary(t *
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("RunStatus(log-only no evidence) output = %q, want it to contain %q", got, want)
+		}
+	}
+	assertNoIndexCacheDir(t, runDir)
+}
+
+func TestRunStatusLogOnlyWithoutParseableEvidenceJSONReturnsCommandError(t *testing.T) {
+	runDir := t.TempDir()
+	logPath := filepath.Join(runDir, ".nextflow.log")
+	logContent := strings.Join([]string{
+		"Apr-28 12:00:00.000 [main] INFO nextflow.Session - Session start",
+		"Apr-28 12:02:00.000 [main] ERROR nextflow.Session - Pipeline aborted before any process failure was reported",
+		"",
+	}, "\n")
+	if err := os.WriteFile(logPath, []byte(logContent), 0o644); err != nil {
+		t.Fatalf("write log fixture: %v", err)
+	}
+
+	var output strings.Builder
+	err := RunStatus(context.Background(), StatusOptions{
+		Global: GlobalOptions{RunDir: runDir, Format: domain.OutputFormatJSON},
+	}, &output)
+	if err == nil {
+		t.Fatalf("RunStatus(log-only no evidence JSON) returned nil error")
+	}
+	if !strings.Contains(err.Error(), "no parseable evidence") {
+		t.Fatalf("RunStatus(log-only no evidence JSON) error = %q, want it to mention no parseable evidence", err.Error())
+	}
+
+	got := output.String()
+	for _, want := range []string{
+		`"format": "json"`,
+		`"mode": "log-only"`,
+		`"failed_count": 0`,
+		`"log_only_evidence": []`,
+		`"code": "log_only_no_parseable_evidence"`,
+		`"code": "nextflow_with_trace_recommended"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("RunStatus(log-only no evidence JSON) output = %q, want it to contain %q", got, want)
+		}
+	}
+	for _, notWant := range []string{`"observed_status":`, `"command_files_available": true`} {
+		if strings.Contains(got, notWant) {
+			t.Fatalf("RunStatus(log-only no evidence JSON) output = %q, did not want fabricated task evidence marker %q", got, notWant)
 		}
 	}
 	assertNoIndexCacheDir(t, runDir)
