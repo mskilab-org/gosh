@@ -130,13 +130,26 @@ type Task struct {
 	// Workdir is empty when unknown, otherwise a path to the task work directory.
 	// When resolved from a short Nextflow hash prefix, it may point to a longer
 	// existing on-disk directory while ID remains the canonical trace/log hash.
-	Workdir      string
-	Exit         *int
-	Duration     string
-	Realtime     string
-	CPUs         string
-	Memory       string
+	// For trace-backed task rows, Workdir may be enriched from a paired selected
+	// Nextflow log only when the log evidence matches this trace row deterministically.
+	Workdir  string
+	Exit     *int
+	Duration string
+	Realtime string
+	CPUs     string
+	Memory   string
+	// ErrorSummary is empty when unknown. For trace-backed task rows, it may be
+	// enriched from deterministic paired Nextflow log evidence; trace rows remain
+	// the complete task-table source of truth.
 	ErrorSummary string
+}
+
+// TraceLogEnrichmentResult is the additive result of applying paired-log evidence
+// to trace-backed task rows. Tasks preserves the trace-backed row set and order;
+// Diagnostics reports non-fatal ambiguity or no-enrichment reasons.
+type TraceLogEnrichmentResult struct {
+	Tasks       []Task
+	Diagnostics []Diagnostic
 }
 
 type TaskQuery struct {

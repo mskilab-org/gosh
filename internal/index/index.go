@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/mskilab-org/gosh/internal/domain"
+	"github.com/mskilab-org/gosh/internal/nflog"
 	"github.com/mskilab-org/gosh/internal/run"
 	"github.com/mskilab-org/gosh/internal/tasks"
 	"github.com/mskilab-org/gosh/internal/trace"
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 type Store struct {
 	Path string
@@ -467,6 +468,18 @@ func RebuildTraceIndex(ctx context.Context, store *Store, runDir domain.RunDir, 
 	parsedTasks, err := trace.ParseTrace(ctx, effectiveRunDir, *artifacts.Trace)
 	if err != nil {
 		return domain.IndexMetadata{}, fmt.Errorf("rebuild trace index parse trace: %w", err)
+	}
+
+	if artifacts.Log != nil {
+		evidence, err := nflog.ParseLogOnlyTaskEvidence(ctx, effectiveRunDir, *artifacts.Log)
+		if err != nil {
+			return domain.IndexMetadata{}, fmt.Errorf("rebuild trace index parse paired log evidence: %w", err)
+		}
+		enriched, err := EnrichTraceTasksWithLogEvidence(ctx, effectiveRunDir, parsedTasks, evidence)
+		if err != nil {
+			return domain.IndexMetadata{}, fmt.Errorf("rebuild trace index enrich from paired log: %w", err)
+		}
+		parsedTasks = enriched.Tasks
 	}
 
 	if err := InsertTasks(ctx, store, parsedTasks); err != nil {
