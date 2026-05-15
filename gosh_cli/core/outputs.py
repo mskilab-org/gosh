@@ -1,6 +1,5 @@
 import os
 import re
-import glob
 import csv
 import sys
 from typing import Optional, List
@@ -90,40 +89,81 @@ OUTPUT_KEYS = [
     "signatures_decomposed_indel",
     "signatures_post_prob_indel",
     "ffpe_impact_vcf",
-  	"ffpe_impact_vcf_filtered",
+    "ffpe_impact_vcf_filtered",
     "hrdetect",
     "onenesstwoness",
     "conpair_concordance",
-    "conpair_contamination"
+    "conpair_contamination",
 ]
 
 # Define the default samplesheet columns
 SAMPLESHEET_FIELDNAMES = [
-    "patient", "sample", "status", "sex", 
-    "bam", "bam_chimera_filtered",
-    "qc_dup_rate", "qc_alignment_summary", "qc_insert_size", "qc_coverage_metrics", 
-    "msi", "msi_germline", 
-    "hets", "amber_dir", 
-    "frag_cov", "dryclean_cov",
-    "cobalt_dir", "purple_pp_best_fit", "purple_pp_best_bit_revised", "purple_pp_range", "purity", "ploidy", 
-    "seg", "nseg", 
-    "vcf", "vcf_raw",
+    "patient",
+    "sample",
+    "status",
+    "sex",
+    "bam",
+    "bam_chimera_filtered",
+    "qc_dup_rate",
+    "qc_alignment_summary",
+    "qc_insert_size",
+    "qc_coverage_metrics",
+    "msi",
+    "msi_germline",
+    "hets",
+    "amber_dir",
+    "frag_cov",
+    "dryclean_cov",
+    "cobalt_dir",
+    "purple_pp_best_fit",
+    "purple_pp_best_bit_revised",
+    "purple_pp_range",
+    "purity",
+    "ploidy",
+    "seg",
+    "nseg",
+    "vcf",
+    "vcf_raw",
     "structural_variants_retiered",
-    "structural_variants_chimera_filtered", "structural_variants_raw_chimera_filtered",
-    "jabba_rds", "jabba_gg", "ni_balanced_gg", "lp_balanced_gg", "events", "fusions",
-    "snv_somatic_vcf", "snv_somatic_vcf_tumoronly_filtered", "snv_somatic_vcf_rescue_ch_heme", "snv_somatic_vcf_raw", "snv_germline_vcf",
-    "itdseek_vcf", "itdseek_rds",
-    "variant_somatic_ann", "variant_somatic_bcf", "echtvar_variant_somatic_bcf", 
-    "variant_germline_ann", "variant_germline_bcf", "echtvar_variant_germline_bcf",
-    "snv_multiplicity", 
-    "oncokb_maf", "oncokb_fusions", "oncokb_intragenic_deletions", "oncokb_intragenic_duplications", "oncokb_cna",
-    "sbs_signatures", "indel_signatures", "signatures_matrix", 
+    "structural_variants_chimera_filtered",
+    "structural_variants_raw_chimera_filtered",
+    "jabba_rds",
+    "jabba_gg",
+    "ni_balanced_gg",
+    "lp_balanced_gg",
+    "events",
+    "fusions",
+    "snv_somatic_vcf",
+    "snv_somatic_vcf_tumoronly_filtered",
+    "snv_somatic_vcf_rescue_ch_heme",
+    "snv_somatic_vcf_raw",
+    "snv_germline_vcf",
+    "itdseek_vcf",
+    "itdseek_rds",
+    "variant_somatic_ann",
+    "variant_somatic_bcf",
+    "echtvar_variant_somatic_bcf",
+    "variant_germline_ann",
+    "variant_germline_bcf",
+    "echtvar_variant_germline_bcf",
+    "snv_multiplicity",
+    "oncokb_maf",
+    "oncokb_fusions",
+    "oncokb_intragenic_deletions",
+    "oncokb_intragenic_duplications",
+    "oncokb_cna",
+    "sbs_signatures",
+    "indel_signatures",
+    "signatures_matrix",
     "signatures_matrix_indel",
     "signatures_decomposed_sbs",
     "signatures_post_prob_sbs",
     "signatures_decomposed_indel",
     "signatures_post_prob_indel",
-    "hrdetect", "onenesstwoness", "conpair_concordance", "conpair_contamination"
+    "hrdetect",
+    "onenesstwoness",
+    "conpair_concordance",
+    "conpair_contamination",
 ]
 
 
@@ -146,12 +186,12 @@ OUTPUT_FILES_MAPPING_OLD = {
     "coverage_normal": r"coverage/dryclean_normal/.*/drycleaned\.cov\.rds$",
     "snvs_somatic": [
         r"snv_calling/sage/somatic/tumor_only_filter/.*/.*\.sage\.pass_filtered\.tumoronly\.vcf\.gz$",
-        r"snv_calling/sage/somatic/.*/.*\.sage\.pass_filtered\.vcf\.gz$"
+        r"snv_calling/sage/somatic/.*/.*\.sage\.pass_filtered\.vcf\.gz$",
     ],
     "snvs_somatic_unfiltered": [
         r"snv_calling/sage/somatic/.*/.*sage\.somatic\.vcf\.gz$",
-        r"snv_calling/sage/somatic/.*/.*\.sage\.pass_filtered\.vcf\.gz$"
-	],
+        r"snv_calling/sage/somatic/.*/.*\.sage\.pass_filtered\.vcf\.gz$",
+    ],
     "snvs_germline": r"snv_calling/sage/germline/.*/.*sage\.germline\.vcf\.gz$",
     "het_pileups": [
         r"amber/.*/sites\.txt$",
@@ -192,94 +232,83 @@ OUTPUT_FILES_MAPPING_OLD = {
 
 # Map each output key to its file regex pattern(s)
 OUTPUT_FILES_MAPPING = {
-    "bam": [
-        r"alignment/.*(?<!ffpe_filtered)\.bam$"	
-	],
-    "bam_tumor": [
-        r"alignment/.*(?<!ffpe_filtered)\.bam$"	
-	],
-    "bam_normal": [
-        r"alignment/.*(?<!ffpe_filtered)\.bam$"	
-	],
-    "bam_tumor_chimera_filtered": [
-        r"alignment/.*ffpe_filtered\.bam$"	
-	],
-    "bam_normal_chimera_filtered": [
-        r"alignment/.*ffpe_filtered\.bam$"
-	],
+    "bam": [r"alignment/.*(?<!ffpe_filtered)\.bam$"],
+    "bam_tumor": [r"alignment/.*(?<!ffpe_filtered)\.bam$"],
+    "bam_normal": [r"alignment/.*(?<!ffpe_filtered)\.bam$"],
+    "bam_tumor_chimera_filtered": [r"alignment/.*ffpe_filtered\.bam$"],
+    "bam_normal_chimera_filtered": [r"alignment/.*ffpe_filtered\.bam$"],
     "qc_dup_rate": [
         r"gatk_qc/.*/.*metrics",
         r"gatk_qc/.*metrics",
         r"markduplicates/.*metrics",
         r"alignment/.*duplicate-metrics.txt",
-        r"parabricks/.*duplicate-metrics.txt"
-	],
+        r"parabricks/.*duplicate-metrics.txt",
+    ],
     "qc_dup_rate_tumor": [
         r"gatk_qc/.*/.*metrics",
         r"gatk_qc/.*metrics",
         r"markduplicates/.*metrics",
         r"alignment/tumor/.*duplicate-metrics.txt",
-        r"parabricks/.*duplicate-metrics.txt"
-	],
+        r"parabricks/.*duplicate-metrics.txt",
+    ],
     "qc_dup_rate_normal": [
         r"gatk_qc/.*/.*metrics",
         r"gatk_qc/.*metrics",
         r"markduplicates/.*metrics",
         r"alignment/normal/.*duplicate-metrics.txt",
-        r"parabricks/.*duplicate-metrics.txt"
-	],
+        r"parabricks/.*duplicate-metrics.txt",
+    ],
     "qc_alignment_summary": [
         r"picard_qc/.*/.*alignment_summary_metrics",
         r"picard_qc/.*alignment_summary_metrics",
         r"alignment/.*qc_metrics/alignment.txt",
-        r"parabricks/.*alignment.txt"
-	],
+        r"parabricks/.*alignment.txt",
+    ],
     "qc_alignment_summary_tumor": [
         r"picard_qc/.*/.*alignment_summary_metrics",
         r"picard_qc/.*alignment_summary_metrics",
-        r"alignment/tumor/.*qc_metrics/alignment.txt"
-        r"parabricks/.*alignment.txt"
-	],
+        r"alignment/tumor/.*qc_metrics/alignment.txt" r"parabricks/.*alignment.txt",
+    ],
     "qc_alignment_summary_normal": [
         r"picard_qc/.*/.*alignment_summary_metrics",
         r"picard_qc/.*alignment_summary_metrics",
         r"alignment/normal/.*qc_metrics/alignment.txt",
-        r"parabricks/.*alignment.txt"
-	],
+        r"parabricks/.*alignment.txt",
+    ],
     "qc_insert_size": [
         r"picard_qc/.*insert_size_metrics",
         r"picard_qc/.*/.*insert_size_metrics",
         r"alignment/.*qc_metrics/insert_size.txt",
-        r"parabricks/.*insert_size.txt"
-	],
+        r"parabricks/.*insert_size.txt",
+    ],
     "qc_insert_size_tumor": [
         r"picard_qc/.*insert_size_metrics",
         r"alignment/tumor/.*qc_metrics/insert_size.txt",
-        r"parabricks/.*insert_size.txt"
-	],
+        r"parabricks/.*insert_size.txt",
+    ],
     "qc_insert_size_normal": [
         r"picard_qc/.*insert_size_metrics",
         r"alignment/normal/.*qc_metrics/insert_size.txt",
-        r"parabricks/.*insert_size.txt"
-	],
+        r"parabricks/.*insert_size.txt",
+    ],
     "qc_coverage_metrics": [
         r"picard_qc/.*coverage_metrics",
         r"picard_qc/.*/.*coverage_metrics",
         r"parabricks_qc/.*coverage_metrics",
-        r"parabricks/.*coverage_metrics"
-	],
+        r"parabricks/.*coverage_metrics",
+    ],
     "qc_coverage_metrics_tumor": [
         r"picard_qc/.*coverage_metrics",
         r"picard_qc/tumor/.*/.*coverage_metrics",
         r"parabricks_qc/tumor/.*coverage_metrics",
-        r"parabricks/.*coverage_metrics"
-	],
+        r"parabricks/.*coverage_metrics",
+    ],
     "qc_coverage_metrics_normal": [
         r"picard_qc/.*coverage_metrics",
         r"picard_qc/normal/.*/.*coverage_metrics",
         r"parabricks_qc/normal/.*coverage_metrics",
-        r"parabricks/.*coverage_metrics"
-	],
+        r"parabricks/.*coverage_metrics",
+    ],
     "msisensorpro": r"msisensorpro/.*_report$",
     "structural_variants": [
         r"gridss/.*gripss\.filtered\.vcf\..*gz$",
@@ -291,11 +320,11 @@ OUTPUT_FILES_MAPPING = {
     ],
     "structural_variants_retiered": [
         r"jabba/.*somatic\.filtered\.gnomAD\.sv.*___tiered\.rds$",
-        r"jabba/.*somatic\.filtered\.sv.*___tiered\.rds$"
+        r"jabba/.*somatic\.filtered\.sv.*___tiered\.rds$",
     ],
     "structural_variants_unfiltered": [
         r"gridss/.*gripss\.vcf\..*gz$",
-        r"gridss.*/.*\.gridss\.filtered\.vcf\.gz$"
+        r"gridss.*/.*\.gridss\.filtered\.vcf\.gz$",
     ],
     "structural_variants_raw": r"gridss.*/.*\.gridss\.vcf\.gz$",
     "structural_variants_chimera_filtered": r"sv_chimera_filter.*/.*\.filtered.ffpe_filtered\.vcf\.gz$",
@@ -306,7 +335,7 @@ OUTPUT_FILES_MAPPING = {
     "coverage_normal": r"dryclean/normal/drycleaned\.cov\.rds$",
     "snvs_somatic": [
         r"sage/somatic/tumor_only_filter/.*\.sage\.pass_filtered\.tumoronly\.vcf\.gz$",
-        r"sage/somatic/.*\.sage\.pass_filtered\.vcf\.gz$"
+        r"sage/somatic/.*\.sage\.pass_filtered\.vcf\.gz$",
     ],
     "snvs_somatic_vcf_tumoronly_filtered": [
         r"sage/somatic/tumor_only_filter/.*\.sage\.pass_filtered\.tumoronly\.vcf\.gz$"
@@ -316,11 +345,9 @@ OUTPUT_FILES_MAPPING = {
     ],
     "snvs_somatic_vcf_unfiltered": [
         r"sage/somatic/.*sage\.somatic\.vcf\.gz$",
-        r"sage/somatic/.*\.sage\.pass_filtered\.vcf\.gz$"
-	],
-    "snvs_somatic_vcf_raw": [
-        r"sage/somatic/.*sage\.somatic\.vcf\.gz$"
+        r"sage/somatic/.*\.sage\.pass_filtered\.vcf\.gz$",
     ],
+    "snvs_somatic_vcf_raw": [r"sage/somatic/.*sage\.somatic\.vcf\.gz$"],
     "snvs_germline": r"sage/germline/.*sage\.germline\.vcf\.gz$",
     "itdseek_vcf": r"itdseek/.*flt3_itd.*\.vcf$",
     "itdseek_rds": r"itdseek/.*flt3_itd_status\.rds$",
@@ -364,21 +391,42 @@ OUTPUT_FILES_MAPPING = {
     "signatures_post_prob_indel": r"sigprofilerassignment/indel_results/Assignment_Solution/Activities/Decomposed_Mutation_Probabilities/Decomposed.*\.txt",
     "signatures_decomposed_indel": r"sigprofilerassignment/indel_results/Assignment_Solution/Activities/Decomposed_Mutation_Probabilities/Decomposed.*\.txt",
     "ffpe_impact_vcf": r"ffpe_impact/.*ffpe_annotated\.vcf\.gz$",
-  	"ffpe_impact_vcf_filtered": r"ffpe_impact/.*ffpe_annotated_filtered\.vcf\.gz$",
+    "ffpe_impact_vcf_filtered": r"ffpe_impact/.*ffpe_annotated_filtered\.vcf\.gz$",
     "signatures_matrix_indel": r"sigprofilerassignment/sig_inputs/output/ID/sigmat_results\.ID83\.all",
     "signatures_decomposed_indel": r"sigprofilerassignment/indel_results/.*/Decomposed_MutationType_Probabilities\.txt",
     "hrdetect": r"hrdetect/hrdetect_results\.rds",
     "onenesstwoness": r"onenesstwoness/onenesstwoness_results\.rds$",
     "conpair_concordance": r"conpair/concordance\.txt$",
-    "conpair_contamination": r"conpair/contamination\.txt$"
+    "conpair_contamination": r"conpair/contamination\.txt$",
 }
 
+# Pre-compiled regex patterns for output file matching.
+# Maps each output key to a list of (compiled_regex, ends_with_slash) tuples.
+# Compiled once at import time so the hot loop in _collect_outputs never
+# calls re.compile() repeatedly.
+COMPILED_OUTPUT_FILES_MAPPING: dict = {
+    key: [
+        (re.compile(p), p.endswith("/"))
+        for p in (pats if isinstance(pats, list) else [pats])
+    ]
+    for key, pats in OUTPUT_FILES_MAPPING.items()
+}
+
+
 class Outputs:
-    def __init__(self, outputs_dir: str, samplesheet: str, use_old: bool = False, prefer_outputs: bool = False):
+    def __init__(
+        self,
+        outputs_dir: str,
+        samplesheet: str,
+        use_old: bool = False,
+        prefer_outputs: bool = False,
+    ):
         self.outputs_dir = os.path.abspath(outputs_dir)
         self.samplesheet = samplesheet
         self.samples_data = self._read_samplesheet()
-        self.outputs = self._collect_outputs(use_old_output_files_mapping=use_old, prefer_outputs = prefer_outputs)
+        self.outputs = self._collect_outputs(
+            use_old_output_files_mapping=use_old, prefer_outputs=prefer_outputs
+        )
 
     def _read_samplesheet(self) -> dict:
         """
@@ -388,17 +436,26 @@ class Outputs:
         - "metadata": a dict of additional metadata (if provided) that matches output keys.
         """
         patient_data = {}
-        with open(self.samplesheet, newline='') as csvfile:
+        with open(self.samplesheet, newline="") as csvfile:
             reader = csv.DictReader(csvfile)
 
             # Maps for columns that need to be split by status (tumor "1" vs normal "0")
             conditional_mapping = {
                 "bam": ("bam_tumor", "bam_normal"),
-                "bam_chimera_filtered": ("bam_tumor_chimera_filtered", "bam_normal_chimera_filtered"),
+                "bam_chimera_filtered": (
+                    "bam_tumor_chimera_filtered",
+                    "bam_normal_chimera_filtered",
+                ),
                 "qc_dup_rate": ("qc_dup_rate", "qc_dup_rate_normal"),
-                "qc_alignment_summary": ("qc_alignment_summary", "qc_alignment_summary_normal"),
+                "qc_alignment_summary": (
+                    "qc_alignment_summary",
+                    "qc_alignment_summary_normal",
+                ),
                 "qc_insert_size": ("qc_insert_size", "qc_insert_size_normal"),
-                "qc_coverage_metrics": ("qc_coverage_metrics", "qc_coverage_metrics_normal"),
+                "qc_coverage_metrics": (
+                    "qc_coverage_metrics",
+                    "qc_coverage_metrics_normal",
+                ),
                 "frag_cov": ("frag_cov_tumor", "frag_cov_normal"),
                 "dryclean_cov": ("coverage_tumor", "coverage_normal"),
             }
@@ -459,7 +516,7 @@ class Outputs:
                 "hrdetect": "hrdetect",
                 "onenesstwoness": "onenesstwoness",
                 "conpair_concordance": "conpair_concordance",
-                "conpair_contamination": "conpair_contamination"
+                "conpair_contamination": "conpair_contamination",
             }
 
             for row in reader:
@@ -478,7 +535,10 @@ class Outputs:
 
                 status = row.get("status", "").strip()
                 sample_id = row.get("sample", "").strip()
-                if sample_id and sample_id not in patient_data[patient_id]["sample_ids"]:
+                if (
+                    sample_id
+                    and sample_id not in patient_data[patient_id]["sample_ids"]
+                ):
                     if status == "1" and patient_data[patient_id]["sample_ids"]:
                         patient_data[patient_id]["sample_ids"].insert(0, sample_id)
                     else:
@@ -499,8 +559,13 @@ class Outputs:
 
                     if col in conditional_mapping:
                         # Assign to tumor or normal key based on status
-                        out_key = conditional_mapping[col][0] if status == "1" else (
-                                  conditional_mapping[col][1] if status == "0" else None)
+                        out_key = (
+                            conditional_mapping[col][0]
+                            if status == "1"
+                            else (
+                                conditional_mapping[col][1] if status == "0" else None
+                            )
+                        )
                         if out_key and not patient_data[patient_id].get(out_key):
                             patient_data[patient_id][out_key] = value
 
@@ -525,8 +590,8 @@ class Outputs:
             patterns = pattern if isinstance(pattern, list) else [pattern]
             for pat in patterns:
                 # Derive process directory prefix from the pattern (assume the prefix is the literal part before '/.*/')
-                if '/.*/' in pat:
-                    process_prefix = pat.split('/.*/')[0]
+                if "/.*/" in pat:
+                    process_prefix = pat.split("/.*/")[0]
                 else:
                     process_prefix = os.path.dirname(pat)
                 # Build the search directory using the process prefix
@@ -534,13 +599,11 @@ class Outputs:
                 if key == "msisensorpro":
                     # Special case for msisensorpro, which has patient in the filename
                     search_dir = self.outputs_dir
-                search_pattern = os.path.join(search_dir, "**", "*")
 
                 for root, dirs, files in os.walk(search_dir):
-                    # Remove 'work' from dirs to prevent os.walk from traversing it
-                    if 'work' in dirs and os.path.samefile(os.path.join(root, 'work'), 
-                                                           os.path.join(search_dir, 'work')):
-                        dirs.remove('work')
+                    # Prune 'work' at any depth, not just at the top level,
+                    # so os.walk never descends into a Nextflow work directory.
+                    dirs[:] = [d for d in dirs if d != "work"]
 
                     # Process files in the current directory
                     for file in files:
@@ -563,9 +626,7 @@ class Outputs:
                         break
 
     def _collect_outputs(
-        self,
-        use_old_output_files_mapping = False,
-        prefer_outputs = True
+        self, use_old_output_files_mapping=False, prefer_outputs=True
     ) -> list:
         """
         For each patient_id from the samplesheet, scan the outputs directory to find files matching
@@ -587,11 +648,11 @@ class Outputs:
             is_paired = ln == 2
             is_empty = ln == 0
             is_invalid = ln > 2
-            
+
             if is_invalid:
-                print(sampleids)
+                print(sample_ids)
                 raise ValueError("More than one sample id found - not supported yet")
-            
+
             if not is_empty:
                 record["tumor_sample"] = sample_ids[0]
             if is_paired:
@@ -604,65 +665,104 @@ class Outputs:
             if use_old_output_files_mapping:
                 self._apply_old_mapping(record)
             else:
-                mapping = OUTPUT_FILES_MAPPING
-                for key, pattern in mapping.items():
+                patient_dir = os.path.join(self.outputs_dir, patient_id)
+
+                # --- Single directory walk per patient ---
+                # os.walk with followlinks=False stops at symlinked directories,
+                # so it never descends from a result symlink into the Nextflow
+                # work directory tree. Symlinked files are still yielded in
+                # `files` as normal, which is all we need.
+                # Any 'work' directory encountered at any depth is also pruned
+                # as a belt-and-suspenders guard for non-standard layouts.
+                all_files: list = []
+                if os.path.isdir(patient_dir):
+                    for root, dirs, files in os.walk(patient_dir, followlinks=False):
+                        dirs[:] = [d for d in dirs if d != "work"]
+                        for fname in files:
+                            filepath = os.path.join(root, fname)
+                            rel_path = os.path.relpath(filepath, patient_dir)
+                            all_files.append((filepath, rel_path))
+
+                # Pre-compile sample-id patterns once per patient so they are
+                # not recompiled for every (key, file) combination.
+                data_sample_ids = data.get(
+                    "sample_ids",
+                    [
+                        "VBHWHNhrLQwyX56NDOBoMWBO",
+                        "dT1Z99GJSU1XT95v1vARKdOt",
+                    ],
+                )
+                compiled_sample_ids = [re.compile(sid) for sid in data_sample_ids]
+
+                # Match every output key against the pre-collected file list.
+                # COMPILED_OUTPUT_FILES_MAPPING maps key -> [(compiled_re, ends_with_slash), ...]
+                for key, compiled_patterns in COMPILED_OUTPUT_FILES_MAPPING.items():
                     is_key_tumor = "_tumor" in key
                     is_key_normal = "_normal" in key
                     is_key_neither_tumor_normal = not is_key_tumor and not is_key_normal
-                    # if record.get(key):
+
                     if not prefer_outputs and record.get(key):
                         continue  # prefer samplesheet value if available
-                    patterns = pattern if isinstance(pattern, list) else [pattern]
-                    patient_dir = os.path.join(self.outputs_dir, patient_id)
-                    is_pattern_filepath_matched = False ## Initializing break conditional
-                    ## Pattern finding
-                    for pat in patterns:
-                        search_pattern = os.path.join(patient_dir, "**", "*")
-                        for filepath in glob.glob(search_pattern, recursive=True):
-                            rel_path = os.path.relpath(filepath, patient_dir)
-                            ## FIXME: hack logic is that if sample_ids is not present, return length 2 list
-                            ## with random, unmatchable strings
-                            data_sample_ids = data.get(
-                                "sample_ids", 
-                                [
-                                    "VBHWHNhrLQwyX56NDOBoMWBO", 
-                                    "dT1Z99GJSU1XT95v1vARKdOt"
-                                ]
+
+                    is_pattern_filepath_matched = False  ## Initializing break conditional
+
+                    for compiled_pat, pat_ends_with_slash in compiled_patterns:
+                        for filepath, rel_path in all_files:
+                            is_tumor_sample_id_in_path = bool(
+                                compiled_sample_ids[0].search(rel_path)
                             )
-                            is_tumor_sample_id_in_path = bool(re.search(data_sample_ids[0], rel_path))
-                            is_normal_sample_id_in_path = False
-                            if len(data_sample_ids) > 1:
-                            	is_normal_sample_id_in_path = bool(re.search(data_sample_ids[1], rel_path))
-                            # is_sample_id_in_path = is_tumor_sample_id_in_path or is_normal_sample_id_in_path
-                            is_sample_id_in_path = any([bool(re.search(sample_id, rel_path)) for sample_id in data_sample_ids])
+                            is_normal_sample_id_in_path = (
+                                bool(compiled_sample_ids[1].search(rel_path))
+                                if len(compiled_sample_ids) > 1
+                                else False
+                            )
+                            is_sample_id_in_path = any(
+                                cid.search(rel_path) for cid in compiled_sample_ids
+                            )
                             is_sample_id_absent_in_path = not is_sample_id_in_path
-                            is_pattern_present = bool(re.search(pat, rel_path))
+                            is_pattern_present = bool(compiled_pat.search(rel_path))
+
                             ## Pattern is in file path, sample_id isn't in file path
-                            is_proceed_with_first_file_match = is_pattern_present and is_sample_id_absent_in_path
+                            is_proceed_with_first_file_match = (
+                                is_pattern_present and is_sample_id_absent_in_path
+                            )
                             ## Pattern is in file path, sample_id is in file path, and key matches with the sample_id type (tumor vs normal)
-                            is_sample_id_file_matched = is_pattern_present and is_sample_id_in_path
-                            is_proceed_with_tumor_sample_id_file_match = is_sample_id_file_matched and is_tumor_sample_id_in_path and is_key_tumor
-                            is_proceed_with_normal_sample_id_file_match = is_sample_id_file_matched and is_normal_sample_id_in_path and is_key_normal
+                            is_sample_id_file_matched = (
+                                is_pattern_present and is_sample_id_in_path
+                            )
+                            is_proceed_with_tumor_sample_id_file_match = (
+                                is_sample_id_file_matched
+                                and is_tumor_sample_id_in_path
+                                and is_key_tumor
+                            )
+                            is_proceed_with_normal_sample_id_file_match = (
+                                is_sample_id_file_matched
+                                and is_normal_sample_id_in_path
+                                and is_key_normal
+                            )
                             ## Pattern is in file path, sample_id is in file path and is the tumor, but the column is neither tumor/normal specific
                             ## The below will preferentially populate with the tumor (which is what we want in most cases)
-                            is_proceed_with_tumor_file_match = is_sample_id_file_matched and is_key_neither_tumor_normal and is_tumor_sample_id_in_path
+                            is_proceed_with_tumor_file_match = (
+                                is_sample_id_file_matched
+                                and is_key_neither_tumor_normal
+                                and is_tumor_sample_id_in_path
+                            )
                             is_filepath_to_be_populated = (
                                 is_proceed_with_first_file_match
                                 or is_proceed_with_tumor_sample_id_file_match
                                 or is_proceed_with_normal_sample_id_file_match
                                 or is_proceed_with_tumor_file_match
-							)
+                            )
                             if is_filepath_to_be_populated:
                                 record[key] = filepath
-                                if pat.endswith("/"):
+                                if pat_ends_with_slash:
                                     record[key] = os.path.dirname(filepath)
-                            is_key_populated = bool(record.get(key)) 
+                            is_key_populated = bool(record.get(key))
                             if is_key_populated:
                                 is_pattern_filepath_matched = True
                                 break
                         if is_pattern_filepath_matched:
                             break
-
             # New: Populate purity and ploidy from purple.purity.tsv (if available)
             purity_file = record["purple_pp_best_fit"]
             if purity_file:
@@ -676,13 +776,15 @@ class Outputs:
                             record["purity"] = mapping_dict["purity"]
                         if "ploidy" in mapping_dict:
                             record["ploidy"] = mapping_dict["ploidy"]
-
             outputs_list.append(record)
         return outputs_list
 
-    def emit_output_csv(self, csv_path: Optional[str] = None,
-                        include_columns: Optional[List[str]] = None,
-                        exclude_columns: Optional[List[str]] = None):
+    def emit_output_csv(
+        self,
+        csv_path: Optional[str] = None,
+        include_columns: Optional[List[str]] = None,
+        exclude_columns: Optional[List[str]] = None,
+    ):
         """
         Write the collected outputs (self.outputs) to a CSV file at csv_path.
         The CSV includes keys from OUTPUT_KEYS except 'sample_ids'.
@@ -696,7 +798,13 @@ class Outputs:
             included_set = set(include_columns)
             fieldnames = [col for col in base_fieldnames if col in included_set]
             # Ensure the order matches include_columns for columns present in base_fieldnames
-            fieldnames.sort(key=lambda col: include_columns.index(col) if col in include_columns else float('inf'))
+            fieldnames.sort(
+                key=lambda col: (
+                    include_columns.index(col)
+                    if col in include_columns
+                    else float("inf")
+                )
+            )
         elif exclude_columns:
             excluded_set = set(exclude_columns)
             fieldnames = [col for col in base_fieldnames if col not in excluded_set]
@@ -708,7 +816,9 @@ class Outputs:
             return
 
         # remove empty columns
-        fieldnames = [col for col in fieldnames if any(row.get(col) for row in self.outputs)]
+        fieldnames = [
+            col for col in fieldnames if any(row.get(col) for row in self.outputs)
+        ]
         if not fieldnames:
             print("Error: No columns selected for output.", file=sys.stderr)
             return
@@ -724,9 +834,12 @@ class Outputs:
         if csv_path:
             output_stream.close()
 
-    def emit_samplesheet_csv(self, csv_path: Optional[str] = None,
-                             include_columns: Optional[List[str]] = None,
-                             exclude_columns: Optional[List[str]] = None):
+    def emit_samplesheet_csv(
+        self,
+        csv_path: Optional[str] = None,
+        include_columns: Optional[List[str]] = None,
+        exclude_columns: Optional[List[str]] = None,
+    ):
         """
         Write a tall samplesheet CSV where every row corresponds to one sample.
         Columns can be filtered using include_columns or exclude_columns.
@@ -744,9 +857,9 @@ class Outputs:
             qc_dup_rate                  -> GATK EstimateLibraryComplexity
             qc_dup_rate_tumor            -> GATK EstimateLibraryComplexity from tumor
             qc_dup_rate_normal           -> GATK EstimateLibraryComplexity from normal
-            qc_insert_size               -> Picard CollectMultipleMetrics 
-            qc_insert_size_tumor         -> Picard CollectMultipleMetrics from tumor 
-            qc_insert_size_normal        -> Picard CollectMultipleMetrics from normal 
+            qc_insert_size               -> Picard CollectMultipleMetrics
+            qc_insert_size_tumor         -> Picard CollectMultipleMetrics from tumor
+            qc_insert_size_normal        -> Picard CollectMultipleMetrics from normal
             qc_alignment_summary         -> Picard CollectMultipleMetrics
             qc_alignment_summary_tumor   -> Picard CollectMultipleMetrics from tumor
             qc_alignment_summary_normal  -> Picard CollectMultipleMetrics from normal
@@ -797,8 +910,14 @@ class Outputs:
             # Filter base_fieldnames, maintaining the order of include_columns if they exist in base
             included_set = set(include_columns)
             fieldnames = [col for col in base_fieldnames if col in included_set]
-             # Ensure the order matches include_columns for columns present in base_fieldnames
-            fieldnames.sort(key=lambda col: include_columns.index(col) if col in include_columns else float('inf'))
+            # Ensure the order matches include_columns for columns present in base_fieldnames
+            fieldnames.sort(
+                key=lambda col: (
+                    include_columns.index(col)
+                    if col in include_columns
+                    else float("inf")
+                )
+            )
         elif exclude_columns:
             excluded_set = set(exclude_columns)
             fieldnames = [col for col in base_fieldnames if col not in excluded_set]
@@ -819,7 +938,9 @@ class Outputs:
         for record in self.outputs:
             sample_rows = []
             if len(record.get("sample_ids", [])) >= 2:
-                print(f"Found paired sample for patient {record['patient_id']}, {record['sample_ids']}")
+                print(
+                    f"Found paired sample for patient {record['patient_id']}, {record['sample_ids']}"
+                )
 
                 # Tumor row (status "1")
                 tumor_sample = record["sample_ids"][0] if record["sample_ids"] else ""
@@ -829,7 +950,9 @@ class Outputs:
                     "status": "1",
                     "sex": record.get("sex", ""),
                     "bam": record.get("bam_tumor", ""),
-                    "bam_chimera_filtered": record.get("bam_tumor_chimera_filtered", ""),
+                    "bam_chimera_filtered": record.get(
+                        "bam_tumor_chimera_filtered", ""
+                    ),
                     "qc_dup_rate": record.get("qc_dup_rate", ""),
                     "qc_alignment_summary": record.get("qc_alignment_summary", ""),
                     "qc_insert_size": record.get("qc_insert_size", ""),
@@ -842,7 +965,9 @@ class Outputs:
                     "dryclean_cov": record.get("coverage_tumor", ""),
                     "cobalt_dir": record.get("cobalt_dir", ""),
                     "purple_pp_best_fit": record.get("purple_pp_best_fit", ""),
-                    "purple_pp_best_fit_revised": record.get("purple_pp_best_fit_revised", ""),
+                    "purple_pp_best_fit_revised": record.get(
+                        "purple_pp_best_fit_revised", ""
+                    ),
                     "purple_pp_range": record.get("purple_pp_range", ""),
                     "purity": record.get("purity", ""),
                     "ploidy": record.get("ploidy", ""),
@@ -850,9 +975,15 @@ class Outputs:
                     "nseg": record.get("nseg", ""),
                     "vcf": record.get("structural_variants", ""),
                     "vcf_raw": record.get("structural_variants_raw", ""),
-                    "structural_variants_retiered": record.get("structural_variants_retiered", ""),
-                    "structural_variants_chimera_filtered": record.get("structural_variants_chimera_filtered", ""),
-                    "structural_variants_raw_chimera_filtered": record.get("structural_variants_raw_chimera_filtered", ""),
+                    "structural_variants_retiered": record.get(
+                        "structural_variants_retiered", ""
+                    ),
+                    "structural_variants_chimera_filtered": record.get(
+                        "structural_variants_chimera_filtered", ""
+                    ),
+                    "structural_variants_raw_chimera_filtered": record.get(
+                        "structural_variants_raw_chimera_filtered", ""
+                    ),
                     "jabba_rds": record.get("jabba_rds", ""),
                     "jabba_gg": record.get("jabba_gg", ""),
                     "ni_balanced_gg": record.get("jabba_gg_balanced", ""),
@@ -861,50 +992,90 @@ class Outputs:
                     "fusions": record.get("fusions", ""),
                     "snv_somatic_vcf": record.get("snvs_somatic", ""),
                     "snv_germline_vcf": record.get("snvs_germline", ""),
-                    "snv_somatic_vcf_unfiltered": record.get("snvs_somatic_vcf_unfiltered", ""),
-                    "snv_somatic_vcf_tumoronly_filtered": record.get("snvs_somatic_vcf_tumoronly_filtered", ""),
-                    "snv_somatic_vcf_rescue_ch_heme": record.get("snvs_somatic_vcf_rescue_ch_heme", ""),
+                    "snv_somatic_vcf_unfiltered": record.get(
+                        "snvs_somatic_vcf_unfiltered", ""
+                    ),
+                    "snv_somatic_vcf_tumoronly_filtered": record.get(
+                        "snvs_somatic_vcf_tumoronly_filtered", ""
+                    ),
+                    "snv_somatic_vcf_rescue_ch_heme": record.get(
+                        "snvs_somatic_vcf_rescue_ch_heme", ""
+                    ),
                     "snv_somatic_vcf_raw": record.get("snvs_somatic_vcf_raw", ""),
                     "itdseek_vcf": record.get("itdseek_vcf", ""),
                     "itdseek_rds": record.get("itdseek_rds", ""),
-                    "variant_somatic_ann": record.get("variant_annotations_somatic_vcf", ""),
-                    "variant_somatic_bcf": record.get("variant_annotations_somatic", ""),
-                    "echtvar_variant_somatic_bcf": record.get("variant_annotations_somatic_echtvar", ""),
-                    "variant_germline_ann": record.get("variant_annotations_germline_vcf", ""),
-                    "variant_germline_bcf": record.get("variant_annotations_germline", ""),
-                    "echtvar_variant_germline_bcf": record.get("variant_annotations_germline_echtvar", ""),
+                    "variant_somatic_ann": record.get(
+                        "variant_annotations_somatic_vcf", ""
+                    ),
+                    "variant_somatic_bcf": record.get(
+                        "variant_annotations_somatic", ""
+                    ),
+                    "echtvar_variant_somatic_bcf": record.get(
+                        "variant_annotations_somatic_echtvar", ""
+                    ),
+                    "variant_germline_ann": record.get(
+                        "variant_annotations_germline_vcf", ""
+                    ),
+                    "variant_germline_bcf": record.get(
+                        "variant_annotations_germline", ""
+                    ),
+                    "echtvar_variant_germline_bcf": record.get(
+                        "variant_annotations_germline_echtvar", ""
+                    ),
                     "snv_multiplicity": record.get("multiplicity", ""),
                     "oncokb_maf": record.get("oncokb_snv", ""),
-                    "oncokb_intragenic_deletions": record.get("oncokb_intragenic_deletions", ""),
-                    "oncokb_intragenic_duplications": record.get("oncokb_intragenic_duplications", ""),
+                    "oncokb_intragenic_deletions": record.get(
+                        "oncokb_intragenic_deletions", ""
+                    ),
+                    "oncokb_intragenic_duplications": record.get(
+                        "oncokb_intragenic_duplications", ""
+                    ),
                     "oncokb_fusions": record.get("oncokb_fusions", ""),
                     "oncokb_cna": record.get("oncokb_cna", ""),
                     "sbs_signatures": record.get("signatures_activities_sbs", ""),
                     "indel_signatures": record.get("signatures_activities_indel", ""),
                     "signatures_matrix": record.get("signatures_matrix_sbs", ""),
-                    "signatures_matrix_indel": record.get("signatures_matrix_indel", ""),
-                    "signatures_decomposed_sbs": record.get("signatures_decomposed_sbs", ""),
-                    "signatures_post_prob_sbs": record.get("signatures_post_prob_sbs", ""),
-                    "signatures_decomposed_indel": record.get("signatures_decomposed_indel", ""),
-                    "signatures_post_prob_indel": record.get("signatures_post_prob_indel", ""),
+                    "signatures_matrix_indel": record.get(
+                        "signatures_matrix_indel", ""
+                    ),
+                    "signatures_decomposed_sbs": record.get(
+                        "signatures_decomposed_sbs", ""
+                    ),
+                    "signatures_post_prob_sbs": record.get(
+                        "signatures_post_prob_sbs", ""
+                    ),
+                    "signatures_decomposed_indel": record.get(
+                        "signatures_decomposed_indel", ""
+                    ),
+                    "signatures_post_prob_indel": record.get(
+                        "signatures_post_prob_indel", ""
+                    ),
                     "hrdetect": record.get("hrdetect", ""),
                     "onenesstwoness": record.get("onenesstwoness", ""),
                     "conpair_concordance": record.get("conpair_concordance", ""),
-                    "conpair_contamination": record.get("conpair_contamination", "")
+                    "conpair_contamination": record.get("conpair_contamination", ""),
                 }
                 sample_rows.append(tumor_row)
 
                 # Normal row (status "0"): second sample in sample_ids if available
-                normal_sample = record["sample_ids"][1] if len(record["sample_ids"]) >= 2 else ""
+                normal_sample = (
+                    record["sample_ids"][1] if len(record["sample_ids"]) >= 2 else ""
+                )
                 normal_row = tumor_row.copy()
                 normal_row["sample"] = normal_sample
                 normal_row["status"] = "0"
                 normal_row["bam"] = record.get("bam_normal", "")
-                normal_row["bam_chimera_filtered"] = record.get("bam_normal_chimera_filtered", "")
+                normal_row["bam_chimera_filtered"] = record.get(
+                    "bam_normal_chimera_filtered", ""
+                )
                 normal_row["qc_dup_rate"] = record.get("qc_dup_rate_normal", "")
-                normal_row["qc_alignment_summary"] = record.get("qc_alignment_summary_normal", "")
+                normal_row["qc_alignment_summary"] = record.get(
+                    "qc_alignment_summary_normal", ""
+                )
                 normal_row["qc_insert_size"] = record.get("qc_insert_size_normal", "")
-                normal_row["qc_coverage_metrics"] = record.get("qc_coverage_metrics_normal", "")
+                normal_row["qc_coverage_metrics"] = record.get(
+                    "qc_coverage_metrics_normal", ""
+                )
                 normal_row["frag_cov"] = record.get("frag_cov_normal", "")
                 normal_row["dryclean_cov"] = record.get("coverage_normal", "")
                 sample_rows.append(normal_row)
@@ -919,74 +1090,122 @@ class Outputs:
                 dryclean_cov = record.get("coverage_tumor", "")
 
                 sample_val = record["sample_ids"][0] if record["sample_ids"] else ""
-                sample_rows.append({
-                    "patient": record.get("patient_id", ""),
-                    "sample": sample_val,
-                    "status": status,
-                    "sex": record.get("sex", ""),
-                    "bam": bam_val,
-                    "bam_chimera_filtered": record.get("bam_tumor_chimera_filtered", ""),
-                    "qc_dup_rate": record.get("qc_dup_rate", ""),
-                    "qc_alignment_summary": record.get("qc_alignment_summary", ""),
-                    "qc_insert_size": record.get("qc_insert_size", ""),
-                    "qc_coverage_metrics": record.get("qc_coverage_metrics", ""),
-                    "msi": record.get("msisensorpro", ""),
-                    "hets": record.get("het_pileups", ""),
-                    "amber_dir": record.get("amber_dir", ""),
-                    "frag_cov": frag_cov,
-                    "dryclean_cov": dryclean_cov,
-                    "cobalt_dir": record.get("cobalt_dir", ""),
-                    "purple_pp_best_fit": record.get("purple_pp_best_fit", ""),
-                    "purple_pp_best_fit_revised": record.get("purple_pp_best_fit_revised", ""),
-                    "purple_pp_range": record.get("purple_pp_range", ""),
-                    "purity": record.get("purity", ""),
-                    "ploidy": record.get("ploidy", ""),
-                    "seg": record.get("seg", ""),
-                    "nseg": record.get("nseg", ""),
-                    "vcf": record.get("structural_variants", ""),
-                    "vcf_raw": record.get("structural_variants_raw", ""),
-                    "structural_variants_retiered": record.get("structural_variants_retiered", ""),
-                    "structural_variants_chimera_filtered": record.get("structural_variants_chimera_filtered", ""),
-                    "structural_variants_raw_chimera_filtered": record.get("structural_variants_raw_chimera_filtered", ""),
-                    "jabba_rds": record.get("jabba_rds", ""),
-                    "jabba_gg": record.get("jabba_gg", ""),
-                    "ni_balanced_gg": record.get("jabba_gg_balanced", ""),
-                    "lp_balanced_gg": record.get("jabba_gg_allelic", ""),
-                    "events": record.get("events", ""),
-                    "fusions": record.get("fusions", ""),
-                    "snv_somatic_vcf": record.get("snvs_somatic", ""),
-                    "snv_somatic_vcf_unfiltered": record.get("snvs_somatic_vcf_unfiltered", ""),
-                    "snv_somatic_vcf_tumoronly_filtered": record.get("snvs_somatic_vcf_tumoronly_filtered", ""),
-                    "snv_somatic_vcf_rescue_ch_heme": record.get("snvs_somatic_vcf_rescue_ch_heme", ""),
-                    "snv_somatic_vcf_raw": record.get("snvs_somatic_vcf_raw", ""),
-                    "snv_germline_vcf": record.get("snvs_germline", ""),
-                    "variant_somatic_ann": record.get("variant_annotations_somatic_vcf", ""),
-                    "variant_somatic_bcf": record.get("variant_annotations_somatic", ""),
-                    "echtvar_variant_somatic_bcf": record.get("variant_annotations_somatic_echtvar", ""),
-                    "variant_germline_ann": record.get("variant_annotations_germline_vcf", ""),
-                    "variant_germline_bcf": record.get("variant_annotations_germline", ""),
-                    "echtvar_variant_germline_bcf": record.get("variant_annotations_germline_echtvar", ""),
-                    "itdseek_vcf": record.get("itdseek_vcf", ""),
-                    "itdseek_rds": record.get("itdseek_rds", ""),
-                    "snv_multiplicity": record.get("multiplicity", ""),
-                    "oncokb_maf": record.get("oncokb_snv", ""),
-                    "oncokb_fusions": record.get("oncokb_fusions", ""),
-                    "oncokb_intragenic_deletions": record.get("oncokb_intragenic_deletions", ""),
-                    "oncokb_intragenic_duplications": record.get("oncokb_intragenic_duplications", ""),
-                    "oncokb_cna": record.get("oncokb_cna", ""),
-                    "sbs_signatures": record.get("signatures_activities_sbs", ""),
-                    "indel_signatures": record.get("signatures_activities_indel", ""),
-                    "signatures_matrix": record.get("signatures_matrix_sbs", ""),
-                    "signatures_matrix_indel": record.get("signatures_matrix_indel", ""),
-                    "signatures_decomposed_sbs": record.get("signatures_decomposed_sbs", ""),
-                    "signatures_decomposed_indel": record.get("signatures_decomposed_indel", ""),
-                    "signatures_post_prob_sbs": record.get("signatures_post_prob_sbs", ""),
-                    "signatures_post_prob_indel": record.get("signatures_post_prob_indel", ""),
-                    "hrdetect": record.get("hrdetect", ""),
-                    "onenesstwoness": record.get("onenesstwoness", ""),
-                    "conpair_concordance": record.get("conpair_concordance", ""),
-                    "conpair_contamination": record.get("conpair_contamination", "")
-                })
+                sample_rows.append(
+                    {
+                        "patient": record.get("patient_id", ""),
+                        "sample": sample_val,
+                        "status": status,
+                        "sex": record.get("sex", ""),
+                        "bam": bam_val,
+                        "bam_chimera_filtered": record.get(
+                            "bam_tumor_chimera_filtered", ""
+                        ),
+                        "qc_dup_rate": record.get("qc_dup_rate", ""),
+                        "qc_alignment_summary": record.get("qc_alignment_summary", ""),
+                        "qc_insert_size": record.get("qc_insert_size", ""),
+                        "qc_coverage_metrics": record.get("qc_coverage_metrics", ""),
+                        "msi": record.get("msisensorpro", ""),
+                        "hets": record.get("het_pileups", ""),
+                        "amber_dir": record.get("amber_dir", ""),
+                        "frag_cov": frag_cov,
+                        "dryclean_cov": dryclean_cov,
+                        "cobalt_dir": record.get("cobalt_dir", ""),
+                        "purple_pp_best_fit": record.get("purple_pp_best_fit", ""),
+                        "purple_pp_best_fit_revised": record.get(
+                            "purple_pp_best_fit_revised", ""
+                        ),
+                        "purple_pp_range": record.get("purple_pp_range", ""),
+                        "purity": record.get("purity", ""),
+                        "ploidy": record.get("ploidy", ""),
+                        "seg": record.get("seg", ""),
+                        "nseg": record.get("nseg", ""),
+                        "vcf": record.get("structural_variants", ""),
+                        "vcf_raw": record.get("structural_variants_raw", ""),
+                        "structural_variants_retiered": record.get(
+                            "structural_variants_retiered", ""
+                        ),
+                        "structural_variants_chimera_filtered": record.get(
+                            "structural_variants_chimera_filtered", ""
+                        ),
+                        "structural_variants_raw_chimera_filtered": record.get(
+                            "structural_variants_raw_chimera_filtered", ""
+                        ),
+                        "jabba_rds": record.get("jabba_rds", ""),
+                        "jabba_gg": record.get("jabba_gg", ""),
+                        "ni_balanced_gg": record.get("jabba_gg_balanced", ""),
+                        "lp_balanced_gg": record.get("jabba_gg_allelic", ""),
+                        "events": record.get("events", ""),
+                        "fusions": record.get("fusions", ""),
+                        "snv_somatic_vcf": record.get("snvs_somatic", ""),
+                        "snv_somatic_vcf_unfiltered": record.get(
+                            "snvs_somatic_vcf_unfiltered", ""
+                        ),
+                        "snv_somatic_vcf_tumoronly_filtered": record.get(
+                            "snvs_somatic_vcf_tumoronly_filtered", ""
+                        ),
+                        "snv_somatic_vcf_rescue_ch_heme": record.get(
+                            "snvs_somatic_vcf_rescue_ch_heme", ""
+                        ),
+                        "snv_somatic_vcf_raw": record.get("snvs_somatic_vcf_raw", ""),
+                        "snv_germline_vcf": record.get("snvs_germline", ""),
+                        "variant_somatic_ann": record.get(
+                            "variant_annotations_somatic_vcf", ""
+                        ),
+                        "variant_somatic_bcf": record.get(
+                            "variant_annotations_somatic", ""
+                        ),
+                        "echtvar_variant_somatic_bcf": record.get(
+                            "variant_annotations_somatic_echtvar", ""
+                        ),
+                        "variant_germline_ann": record.get(
+                            "variant_annotations_germline_vcf", ""
+                        ),
+                        "variant_germline_bcf": record.get(
+                            "variant_annotations_germline", ""
+                        ),
+                        "echtvar_variant_germline_bcf": record.get(
+                            "variant_annotations_germline_echtvar", ""
+                        ),
+                        "itdseek_vcf": record.get("itdseek_vcf", ""),
+                        "itdseek_rds": record.get("itdseek_rds", ""),
+                        "snv_multiplicity": record.get("multiplicity", ""),
+                        "oncokb_maf": record.get("oncokb_snv", ""),
+                        "oncokb_fusions": record.get("oncokb_fusions", ""),
+                        "oncokb_intragenic_deletions": record.get(
+                            "oncokb_intragenic_deletions", ""
+                        ),
+                        "oncokb_intragenic_duplications": record.get(
+                            "oncokb_intragenic_duplications", ""
+                        ),
+                        "oncokb_cna": record.get("oncokb_cna", ""),
+                        "sbs_signatures": record.get("signatures_activities_sbs", ""),
+                        "indel_signatures": record.get(
+                            "signatures_activities_indel", ""
+                        ),
+                        "signatures_matrix": record.get("signatures_matrix_sbs", ""),
+                        "signatures_matrix_indel": record.get(
+                            "signatures_matrix_indel", ""
+                        ),
+                        "signatures_decomposed_sbs": record.get(
+                            "signatures_decomposed_sbs", ""
+                        ),
+                        "signatures_decomposed_indel": record.get(
+                            "signatures_decomposed_indel", ""
+                        ),
+                        "signatures_post_prob_sbs": record.get(
+                            "signatures_post_prob_sbs", ""
+                        ),
+                        "signatures_post_prob_indel": record.get(
+                            "signatures_post_prob_indel", ""
+                        ),
+                        "hrdetect": record.get("hrdetect", ""),
+                        "onenesstwoness": record.get("onenesstwoness", ""),
+                        "conpair_concordance": record.get("conpair_concordance", ""),
+                        "conpair_contamination": record.get(
+                            "conpair_contamination", ""
+                        ),
+                    }
+                )
 
             for row in sample_rows:
                 # Filter the row to include only the selected fieldnames

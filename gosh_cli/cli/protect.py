@@ -18,7 +18,6 @@ from pathlib import Path
 
 import click
 
-
 STATE_FILENAME = ".gosh_protected.json"
 
 
@@ -50,14 +49,23 @@ def _remove_write_bits(mode: int) -> int:
     return mode & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
 
 
-def _iter_targets(hash_dir: Path, recursive: bool):
-    """Yield the hash dir itself, plus (if recursive) all non-symlink descendants."""
+def _add_write_bits(mode: int) -> int:
+    return mode | (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+
+
+def _iter_dir_targets(hash_dir: Path, recursive: bool):
+    """Yield the hash dir itself, plus (if recursive) all non-symlink subdirectories.
+
+    Files are intentionally excluded: the write bit on a *directory* is what
+    controls whether entries inside it can be created or deleted.  Chmoding
+    individual files is unnecessary for deletion protection and wastes a stat +
+    chmod syscall per file across potentially thousands of work directories."""
     yield hash_dir
     if not recursive:
         return
-    for dirpath, dirnames, filenames in os.walk(hash_dir, followlinks=False):
+    for dirpath, dirnames, _ in os.walk(hash_dir, followlinks=False):
         dp = Path(dirpath)
-        for name in filenames + dirnames:
+        for name in dirnames:
             p = dp / name
             if not p.is_symlink():
                 yield p
@@ -117,12 +125,65 @@ def protect_cli(results_dir, work_dir, unprotect, recursive, dry_run):
     state_path = work_path / STATE_FILENAME
     state = _load_state(state_path)
 
+    changed = 0
+    skipped = 0
+    missing = 0
+    errors = 0
+
     if unprotect:
-        targets = sorted(state.keys())
-        if not targets:
+        hash_dirs = sorted(state.keys())
+        if not hash_dirs:
             click.secho(f"No protected paths recorded in {state_path}.", fg="yellow")
             return
-        click.secho(f"Restoring {len(targets)} paths from {state_path}...", fg="blue")
+        click.secho(
+            f"Restoring {len(hash_dirs)} work hash directories from {state_path}...",
+            fg="blue",
+        )
+
+        for hd_str in hash_dirs:
+            hd = Path(hd_str)
+            entry = state.get(hd_str)
+            if entry is None:
+                skipped += 1
+                continue
+            orig_mode = entry["mode"]
+
+            if dry_run:
+                click.echo(f"[dry-run] restore {oct(orig_mode)} {hd}")
+                changed += 1
+                continue
+
+            # Re-add write bits to all subdirectories first (chmod on a directory
+            # does not require write on its parent, so order doesn't matter for
+            # correctness, but doing subdirs before the hash dir is cleaner).
+            if recursive and hd.exists():
+                for dirpath, dirnames, _ in os.walk(hd, followlinks=False):
+                    for name in dirnames:
+                        subdir = Path(dirpath) / name
+                        if subdir.is_symlink():
+                            continue
+                        try:
+                            t_mode = stat.S_IMODE(
+                                os.stat(subdir, follow_symlinks=False).st_mode
+                            )
+                            new_mode = _add_write_bits(t_mode)
+                            if new_mode != t_mode:
+                                os.chmod(subdir, new_mode)
+                        except OSError:
+                            pass
+
+            # Restore the hash dir to its original recorded mode.
+            try:
+                os.chmod(hd, orig_mode)
+                del state[hd_str]
+                changed += 1
+            except FileNotFoundError:
+                del state[hd_str]
+                missing += 1
+            except OSError as e:
+                click.secho(f"Warning: chmod failed on {hd}: {e}", fg="yellow")
+                errors += 1
+
     else:
         results_path = Path(results_dir).resolve()
         if not results_path.is_dir():
@@ -133,73 +194,61 @@ def protect_cli(results_dir, work_dir, unprotect, recursive, dry_run):
         click.secho(
             f"Found {len(all_dirs)} referenced work hash directories.", fg="blue"
         )
-        targets = [
-            str(p) for hd in sorted(all_dirs) for p in _iter_targets(hd, recursive)
-        ]
 
-    changed = 0
-    skipped = 0
-    missing = 0
-    errors = 0
+        now = datetime.now().isoformat(timespec="seconds")
+        for hd in sorted(all_dirs):
+            hd_str = str(hd)
 
-    for key in targets:
-        target = Path(key)
-
-        if unprotect:
-            entry = state.get(key)
-            if entry is None:
-                skipped += 1
-                continue
-            orig_mode = entry["mode"]
-            if dry_run:
-                click.echo(f"[dry-run] restore {oct(orig_mode)} {target}")
-                changed += 1
-                continue
+            # Record only the hash dir's original mode in state (one entry per
+            # hash dir instead of one per file).  The hash dir's write bit is
+            # the only one needed to reconstruct the protected state on restore.
             try:
-                os.chmod(target, orig_mode)
-                del state[key]
-                changed += 1
+                hd_st = os.stat(hd, follow_symlinks=False)
             except FileNotFoundError:
-                del state[key]
                 missing += 1
+                continue
             except OSError as e:
-                click.secho(f"Warning: chmod failed on {target}: {e}", fg="yellow")
+                click.secho(f"Warning: stat failed on {hd}: {e}", fg="yellow")
                 errors += 1
-            continue
+                continue
 
-        # Protect path
-        try:
-            st = os.stat(target, follow_symlinks=False)
-        except FileNotFoundError:
-            missing += 1
-            continue
-        except OSError as e:
-            click.secho(f"Warning: stat failed on {target}: {e}", fg="yellow")
-            errors += 1
-            continue
+            hd_mode = stat.S_IMODE(hd_st.st_mode)
+            if hd_str not in state:
+                state[hd_str] = {"mode": hd_mode, "protected_at": now}
 
-        cur_mode = stat.S_IMODE(st.st_mode)
-        new_mode = _remove_write_bits(cur_mode)
-        if new_mode == cur_mode:
-            skipped += 1
-            continue
+            # Stream through the hash dir and its subdirectories, chmoding each.
+            # _iter_dir_targets yields only directories — files are skipped since
+            # the parent directory's write bit is what prevents deletion.
+            for target in _iter_dir_targets(hd, recursive):
+                try:
+                    t_st = os.stat(target, follow_symlinks=False)
+                except FileNotFoundError:
+                    missing += 1
+                    continue
+                except OSError as e:
+                    click.secho(f"Warning: stat failed on {target}: {e}", fg="yellow")
+                    errors += 1
+                    continue
 
-        if key not in state:
-            state[key] = {
-                "mode": cur_mode,
-                "protected_at": datetime.now().isoformat(timespec="seconds"),
-            }
+                cur_mode = stat.S_IMODE(t_st.st_mode)
+                new_mode = _remove_write_bits(cur_mode)
+                if new_mode == cur_mode:
+                    skipped += 1
+                    continue
 
-        if dry_run:
-            click.echo(f"[dry-run] chmod {oct(cur_mode)}->{oct(new_mode)} {target}")
-            changed += 1
-            continue
-        try:
-            os.chmod(target, new_mode)
-            changed += 1
-        except OSError as e:
-            click.secho(f"Warning: chmod failed on {target}: {e}", fg="yellow")
-            errors += 1
+                if dry_run:
+                    click.echo(
+                        f"[dry-run] chmod {oct(cur_mode)}->{oct(new_mode)} {target}"
+                    )
+                    changed += 1
+                    continue
+
+                try:
+                    os.chmod(target, new_mode)
+                    changed += 1
+                except OSError as e:
+                    click.secho(f"Warning: chmod failed on {target}: {e}", fg="yellow")
+                    errors += 1
 
     if not dry_run:
         try:
