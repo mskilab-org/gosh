@@ -54,6 +54,7 @@ OUTPUT_KEYS = [
     "purple_pp_best_fit",
     "purple_pp_best_fit_revised",
     "purple_pp_range",
+    "ichorcna_params",
     "purity",
     "ploidy",
     "seg",
@@ -120,6 +121,7 @@ SAMPLESHEET_FIELDNAMES = [
     "purple_pp_range",
     "purity",
     "ploidy",
+    "ichorcna_params",
     "seg",
     "nseg",
     "vcf",
@@ -267,29 +269,35 @@ OUTPUT_FILES_MAPPING = {
     "qc_alignment_summary_tumor": [
         r"picard_qc/.*/.*alignment_summary_metrics",
         r"picard_qc/.*alignment_summary_metrics",
-        r"alignment/tumor/.*qc_metrics/alignment.txt" r"parabricks/.*alignment.txt",
+        r"alignment/tumor/.*qc_metrics/alignment.txt",
+        r"parabricks_multiple_metrics/.*alignment.txt",
+        r"parabricks/.*alignment.txt",
     ],
     "qc_alignment_summary_normal": [
         r"picard_qc/.*/.*alignment_summary_metrics",
         r"picard_qc/.*alignment_summary_metrics",
         r"alignment/normal/.*qc_metrics/alignment.txt",
+        r"parabricks_multiple_metrics/.*alignment.txt",
         r"parabricks/.*alignment.txt",
     ],
     "qc_insert_size": [
         r"picard_qc/.*insert_size_metrics",
         r"picard_qc/.*/.*insert_size_metrics",
-        r"alignment/.*qc_metrics/insert_size.txt",
-        r"parabricks/.*insert_size.txt",
+        r"alignment/.*qc_metrics/insert_size\.txt",
+        r"parabricks_multiple_metrics/.*insert_size\.txt",
+        r"parabricks/.*insert_size\.txt",
     ],
     "qc_insert_size_tumor": [
         r"picard_qc/.*insert_size_metrics",
-        r"alignment/tumor/.*qc_metrics/insert_size.txt",
-        r"parabricks/.*insert_size.txt",
+        r"alignment/tumor/.*qc_metrics/insert_size\.txt",
+        r"parabricks_multiple_metrics/.*insert_size\.txt",
+        r"parabricks/.*insert_size\.txt",
     ],
     "qc_insert_size_normal": [
         r"picard_qc/.*insert_size_metrics",
-        r"alignment/normal/.*qc_metrics/insert_size.txt",
-        r"parabricks/.*insert_size.txt",
+        r"alignment/normal/.*qc_metrics/insert_size\.txt",
+        r"parabricks_multiple_metrics/.*insert_size\.txt",
+        r"parabricks/.*insert_size\.txt",
     ],
     "qc_coverage_metrics": [
         r"picard_qc/.*coverage_metrics",
@@ -358,6 +366,7 @@ OUTPUT_FILES_MAPPING = {
     "purple_pp_best_fit": r"purple/.*purple\.purity\.tsv$",
     "purple_pp_best_fit_revised": r"purple/.*purple\.purity\.revised\.tsv$",
     "purple_qc": r"purple/.*purple\.qc$",
+    "ichorcna_params": r"ichorcna/.*params\.txt$",
     "seg": r"cbs/seg.rds",
     "nseg": r"cbs/nseg.rds",
     "multiplicity": r"snv_multiplicity/.*est_snv_cn_somatic\.rds$",
@@ -484,6 +493,7 @@ class Outputs:
                 "purple_pp_best_fit": "purple_pp_best_fit",
                 "purple_pp_best_fit_revised": "purple_pp_best_fit_revised",
                 "purple_pp_range": "purple_pp_range",
+                "ichorcna_params": "ichorcna_params",
                 "events": "events",
                 "fusions": "fusions",
                 "snv_somatic_vcf": "snvs_somatic",
@@ -668,16 +678,45 @@ class Outputs:
                 patient_dir = os.path.join(self.outputs_dir, patient_id)
 
                 # --- Single directory walk per patient ---
-                # os.walk with followlinks=False stops at symlinked directories,
-                # so it never descends from a result symlink into the Nextflow
-                # work directory tree. Symlinked files are still yielded in
-                # `files` as normal, which is all we need.
-                # Any 'work' directory encountered at any depth is also pruned
-                # as a belt-and-suspenders guard for non-standard layouts.
+                # --- Single directory walk per patient ---
+                # In a Nextflow results tree every published output — whether a
+                # file or a directory — is a symlink pointing back into the
+                # work/ directory.  That is normal and expected; the symlinked
+                # directories are shallow (they contain only the task outputs)
+                # and must be followed to find the files inside them.
+                #
+                # The only directory we must never descend into is an actual
+                # "work" directory that is physically present under the patient
+                # dir (non-standard layouts or misconfigured publishDir).
+                # Following a symlink that *points* into work is fine — it
+                # brings us into a single flat task directory, not the whole
+                # work tree.
+                #
+                # Safety against symlink cycles (which os.walk(followlinks=True)
+                # does not detect on its own) is provided by tracking the real
+                # path of every directory we enter and skipping any we've seen.
                 all_files: list = []
                 if os.path.isdir(patient_dir):
-                    for root, dirs, files in os.walk(patient_dir, followlinks=False):
-                        dirs[:] = [d for d in dirs if d != "work"]
+                    seen_real_dirs: set = {os.path.realpath(patient_dir)}
+                    for root, dirs, files in os.walk(patient_dir, followlinks=True):
+                        safe_dirs = []
+                        for d in dirs:
+                            # Never enter a physical work directory.
+                            if d == "work" and not os.path.islink(
+                                os.path.join(root, d)
+                            ):
+                                continue
+                            # Cycle guard: skip already-visited real paths.
+                            full = os.path.join(root, d)
+                            try:
+                                real = os.path.realpath(full)
+                            except OSError:
+                                continue
+                            if real in seen_real_dirs:
+                                continue
+                            seen_real_dirs.add(real)
+                            safe_dirs.append(d)
+                        dirs[:] = safe_dirs
                         for fname in files:
                             filepath = os.path.join(root, fname)
                             rel_path = os.path.relpath(filepath, patient_dir)
@@ -704,7 +743,9 @@ class Outputs:
                     if not prefer_outputs and record.get(key):
                         continue  # prefer samplesheet value if available
 
-                    is_pattern_filepath_matched = False  ## Initializing break conditional
+                    is_pattern_filepath_matched = (
+                        False  ## Initializing break conditional
+                    )
 
                     for compiled_pat, pat_ends_with_slash in compiled_patterns:
                         for filepath, rel_path in all_files:
@@ -969,6 +1010,7 @@ class Outputs:
                         "purple_pp_best_fit_revised", ""
                     ),
                     "purple_pp_range": record.get("purple_pp_range", ""),
+                    "ichorcna_params": record.get("ichorcna_params", ""),
                     "purity": record.get("purity", ""),
                     "ploidy": record.get("ploidy", ""),
                     "seg": record.get("seg", ""),
@@ -1064,6 +1106,7 @@ class Outputs:
                 normal_row = tumor_row.copy()
                 normal_row["sample"] = normal_sample
                 normal_row["status"] = "0"
+                normal_row["ichorcna_params"] = record.get("ichorcna_params", "")
                 normal_row["bam"] = record.get("bam_normal", "")
                 normal_row["bam_chimera_filtered"] = record.get(
                     "bam_normal_chimera_filtered", ""
@@ -1115,6 +1158,7 @@ class Outputs:
                             "purple_pp_best_fit_revised", ""
                         ),
                         "purple_pp_range": record.get("purple_pp_range", ""),
+                        "ichorcna_params": record.get("ichorcna_params", ""),
                         "purity": record.get("purity", ""),
                         "ploidy": record.get("ploidy", ""),
                         "seg": record.get("seg", ""),

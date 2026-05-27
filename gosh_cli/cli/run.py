@@ -1,7 +1,9 @@
+import csv
 import datetime
 import json
 import os
 import re
+import sys
 from os import makedirs, path, getenv
 from shutil import rmtree
 from sys import exit
@@ -16,6 +18,143 @@ from ..settings import GENOME_MAP as genome_map
 def run_cli():
     """Run pipeline commands"""
     pass
+
+
+# ---------------------------------------------------------------------------
+# gosh run trace
+# ---------------------------------------------------------------------------
+
+@run_cli.group(name="trace")
+def trace_cli():
+    """Parse and merge Nextflow execution traces."""
+    pass
+
+
+@trace_cli.command(name="merge")
+@click.argument(
+    "pipeline_info_dir",
+    default="./results/pipeline_info",
+    type=click.Path(file_okay=False),
+)
+@click.option(
+    "-w",
+    "--work-dir",
+    default=None,
+    type=click.Path(file_okay=False),
+    help=(
+        "Path to the Nextflow work/ directory. "
+        "Defaults to ../../work relative to PIPELINE_INFO_DIR."
+    ),
+)
+@click.option(
+    "-o",
+    "--output",
+    default=None,
+    type=click.Path(),
+    help=(
+        "Output TSV file path. "
+        "Defaults to merged_trace_<YYYY-MM-DD_HH-MM-SS>.tsv inside PIPELINE_INFO_DIR. "
+        "Pass '-' to write to stdout."
+    ),
+)
+@click.option(
+    "--no-work-dir",
+    is_flag=True,
+    default=False,
+    help="Omit the work_dir column from the output.",
+)
+@click.option(
+    "--no-trace-file",
+    is_flag=True,
+    default=False,
+    help="Omit the trace_file provenance column from the output.",
+)
+def trace_merge(pipeline_info_dir, work_dir, output, no_work_dir, no_trace_file):
+    """Merge all execution_trace_*.txt files in PIPELINE_INFO_DIR into one TSV.
+
+    Each task row gains a resolved work_dir column (absolute path on disk)
+    built from the short hash in the trace (e.g. 02/5852bd → work/02/<full>/),
+    plus a trace_file column recording which source file the row came from.
+
+    Rows are sorted by submit timestamp then task_id.  When the same task
+    appears in multiple trace files (e.g. across resume runs) all copies are
+    kept; use --hash to deduplicate externally if needed.
+
+    \b
+    Examples
+    --------
+    # Write a timestamped TSV into pipeline_info_dir (default)
+    gosh run trace merge ./results/pipeline_info
+
+    # Write to a specific file
+    gosh run trace merge ./results/pipeline_info -o merged_trace.tsv
+
+    # Print to stdout
+    gosh run trace merge ./results/pipeline_info -o -
+    """
+    from .parse_trace import parse_traces
+
+    try:
+        records = parse_traces(pipeline_info_dir, work_dir=work_dir)
+    except FileNotFoundError as exc:
+        click.secho(f"Error: {exc}", fg="red", err=True)
+        sys.exit(1)
+
+    if not records:
+        click.secho("No records found.", fg="yellow", err=True)
+        sys.exit(0)
+
+    # Determine column order: original trace columns first, then extras
+    base_cols = [
+        c for c in records[0].keys()
+        if c not in ("work_dir", "trace_file")
+    ]
+    extra_cols = []
+    if not no_work_dir:
+        extra_cols.append("work_dir")
+    if not no_trace_file:
+        extra_cols.append("trace_file")
+    fieldnames = base_cols + extra_cols
+
+    # Strip columns not requested
+    if no_work_dir:
+        for r in records:
+            r.pop("work_dir", None)
+    if no_trace_file:
+        for r in records:
+            r.pop("trace_file", None)
+
+    def _write(fh):
+        writer = csv.DictWriter(
+            fh,
+            fieldnames=fieldnames,
+            delimiter="\t",
+            extrasaction="ignore",
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerows(records)
+
+    if output == "-":
+        _write(sys.stdout)
+    else:
+        # Build a timestamped filename when no explicit path is given
+        if output is None:
+            ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            output = os.path.join(
+                os.path.abspath(pipeline_info_dir),
+                f"merged_trace_{ts}.tsv",
+            )
+        with open(output, "w", newline="", encoding="utf-8") as fh:
+            _write(fh)
+        n_resolved = sum(1 for r in records if r.get("work_dir"))
+        n_total = len(records)
+        click.secho(
+            f"Wrote {n_total} records to {output} "
+            f"({n_resolved} work dirs resolved).",
+            fg="green",
+            err=True,
+        )
 
 
 # Define the full list of tools available in the pipeline
