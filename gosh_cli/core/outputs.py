@@ -36,6 +36,8 @@ OUTPUT_KEYS = [
     "structural_variants_retiered",
     "structural_variants_unfiltered",
     "structural_variants_raw",
+    "structural_variants_chimera_filtered",
+    "structural_variants_raw_chimera_filtered",
     "frag_cov_tumor",
     "frag_cov_normal",
     "coverage_tumor",
@@ -117,7 +119,7 @@ SAMPLESHEET_FIELDNAMES = [
     "dryclean_cov",
     "cobalt_dir",
     "purple_pp_best_fit",
-    "purple_pp_best_bit_revised",
+    "purple_pp_best_fit_revised",
     "purple_pp_range",
     "purity",
     "ploidy",
@@ -149,6 +151,8 @@ SAMPLESHEET_FIELDNAMES = [
     "variant_germline_bcf",
     "echtvar_variant_germline_bcf",
     "snv_multiplicity",
+    "snv_multiplicity_hets",
+    "snv_multiplicity_germline",
     "oncokb_maf",
     "oncokb_fusions",
     "oncokb_intragenic_deletions",
@@ -325,6 +329,7 @@ OUTPUT_FILES_MAPPING = {
         r"gridss/.*somatic\.filtered\.sv\.no\.gnomAD\.rds$",
         r"tumor_only_junction_filter/.*/somatic\.filtered\.sv\.rds$",
         r"gridss/.*somatic\.filtered\.sv\.rds$",
+        r"esvee/.*\.esvee\.somatic\.vcf\.gz$",
     ],
     "structural_variants_retiered": [
         r"jabba/.*somatic\.filtered\.gnomAD\.sv.*___tiered\.rds$",
@@ -333,10 +338,21 @@ OUTPUT_FILES_MAPPING = {
     "structural_variants_unfiltered": [
         r"gridss/.*gripss\.vcf\..*gz$",
         r"gridss.*/.*\.gridss\.filtered\.vcf\.gz$",
+        r"esvee/.*\.esvee\.unfiltered\.vcf\.gz$",
     ],
-    "structural_variants_raw": r"gridss.*/.*\.gridss\.vcf\.gz$",
-    "structural_variants_chimera_filtered": r"sv_chimera_filter.*/.*\.filtered.ffpe_filtered\.vcf\.gz$",
-    "structural_variants_raw_chimera_filtered": r"sv_chimera_filter.*/(?!.*\.filtered\.).*\.ffpe_filtered\.vcf\.gz$",
+    "structural_variants_raw": [
+        r"gridss.*/.*\.gridss\.vcf\.gz$",
+        # nf-gos uses Esvee's unfiltered calls for vcf_raw, not assembly raw calls.
+        r"esvee/.*\.esvee\.unfiltered\.vcf\.gz$",
+    ],
+    "structural_variants_chimera_filtered": [
+        r"sv_chimera_filter.*/.*\.filtered\.ffpe_filtered\.vcf\.gz$",
+        r"sv_chimera_filter.*/.*\.esvee\.somatic\.ffpe_filtered\.vcf\.gz$",
+    ],
+    "structural_variants_raw_chimera_filtered": [
+        r"sv_chimera_filter.*/(?!.*\.(?:filtered|esvee)\.).*\.ffpe_filtered\.vcf\.gz$",
+        r"sv_chimera_filter.*/.*\.esvee\.unfiltered\.ffpe_filtered\.vcf\.gz$",
+    ],
     "frag_cov_tumor": r"fragcounter/tumor/cov\.rds$",
     "frag_cov_normal": r"fragcounter/normal/cov\.rds$",
     "coverage_tumor": r"dryclean/tumor/drycleaned\.cov\.rds$",
@@ -510,6 +526,8 @@ class Outputs:
                 "variant_germline_bcf": "variant_annotations_germline",
                 "echtvar_variant_germline_bcf": "variant_annotations_germline_echtvar",
                 "snv_multiplicity": "multiplicity",
+                "snv_multiplicity_hets": "multiplicity_hetsnps",
+                "snv_multiplicity_germline": "multiplicity_germline",
                 "oncokb_maf": "oncokb_snv",
                 "oncokb_fusions": "oncokb_fusions",
                 "oncokb_intragenic_deletions": "oncokb_intragenic_deletions",
@@ -931,6 +949,8 @@ class Outputs:
             variant_germline_ann         -> variant_annotations_germline_vcf
             variant_germline_bcf         -> variant_annotations_germline
             snv_multiplicity             -> multiplicity
+            snv_multiplicity_hets        -> multiplicity_hetsnps
+            snv_multiplicity_germline    -> multiplicity_germline
             oncokb_maf                   -> oncokb_snv
             oncokb_fusions               -> oncokb_fusions
             oncokb_cna                   -> oncokb_cna
@@ -1065,6 +1085,10 @@ class Outputs:
                         "variant_annotations_germline_echtvar", ""
                     ),
                     "snv_multiplicity": record.get("multiplicity", ""),
+                    "snv_multiplicity_hets": record.get("multiplicity_hetsnps", ""),
+                    "snv_multiplicity_germline": record.get(
+                        "multiplicity_germline", ""
+                    ),
                     "oncokb_maf": record.get("oncokb_snv", ""),
                     "oncokb_intragenic_deletions": record.get(
                         "oncokb_intragenic_deletions", ""
@@ -1213,6 +1237,10 @@ class Outputs:
                         "itdseek_vcf": record.get("itdseek_vcf", ""),
                         "itdseek_rds": record.get("itdseek_rds", ""),
                         "snv_multiplicity": record.get("multiplicity", ""),
+                        "snv_multiplicity_hets": record.get("multiplicity_hetsnps", ""),
+                        "snv_multiplicity_germline": record.get(
+                            "multiplicity_germline", ""
+                        ),
                         "oncokb_maf": record.get("oncokb_snv", ""),
                         "oncokb_fusions": record.get("oncokb_fusions", ""),
                         "oncokb_intragenic_deletions": record.get(

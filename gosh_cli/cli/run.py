@@ -207,6 +207,12 @@ ALL_TOOLS_STR = ",".join(ALL_TOOLS)
     "--resume/--no-resume", default=True, help="Resume previous run if possible"
 )
 @click.option(
+    "--bg",
+    "background",
+    is_flag=True,
+    help="Run Nextflow in the background and write output to a timestamped execution log.",
+)
+@click.option(
     "-p", "--processes", help="Comma-separated list of process names to rerun"
 )
 @click.option("-s", "--samples", help="Comma-separated list of sample IDs to rerun")
@@ -245,6 +251,7 @@ def pipeline(
     params_file,
     profile,
     resume,
+    background,
     processes,
     samples,
     skip_tools,
@@ -515,17 +522,23 @@ def pipeline(
         configs_lst.append(out_conf)
 
     configs = " ".join([f"-c {resolved_config}" for resolved_config in configs_lst])
+    run_timestamp = runner.get_timestamp()
+    nextflow_command = f"{runner.cmd} "
+    pid_file = None
+    if background:
+        pid_file = f".nextflow_{run_timestamp}.pid"
+        nextflow_command = f"NXF_PID_FILE={pid_file} {nextflow_command}"
 
     command = (
         f"{load_modules_command} "
         f"{runner.cmd} secrets set ONCOKB_API_KEY {oncokb_api_key} && "
-        f"{runner.cmd} "
+        f"{nextflow_command}"
         f"{configs} "
-        f"-log .nextflow_{runner.get_timestamp()}.log "
+        f"-log .nextflow_{run_timestamp}.log "
         f"run {pipeline_dir} "
         f"-params-file {params_file} "
         f"-profile {profile} "
-        f"-with-report report_{runner.get_timestamp()}.html "
+        f"-with-report report_{run_timestamp}.html "
         f"-with-trace"
         # f"; gosh run outputs --force"
         # f"; gosh run samplesheet --force"
@@ -538,8 +551,18 @@ def pipeline(
     if not extra_args is None and not len(extra_args) == 0:
         command += f' {" ".join(extra_args)} '
 
+
+    if background:
+        execution_log = datetime.datetime.now().strftime(
+            "execution_%Y-%m-%d.%H.%M.%S.log"
+        )
+        command += f" -bg > {execution_log} 2>&1"
     print(f"command to run: {command}")
     runner.run(command)
+
+    if background:
+        runner.finalize_after_background_run(pid_file, execution_log)
+        return
 
     runner.run("gosh run post")
     runner.run("gosh protect")

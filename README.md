@@ -113,6 +113,27 @@ patient_id,bam_tumor,bam_normal,structural_variants,jabba_rds,purple_purity,purp
 TCGA001,/results/TCGA001/alignment/tumor.bam,/results/TCGA001/alignment/normal.bam,...
 ```
 
+Both `gosh run outputs` and `gosh run samplesheet` recognize Esvee as a
+fallback for GRIDSS in the current `results/<patient>/` layout:
+
+| Esvee output | `outputs.csv` field | Resume samplesheet field |
+| --- | --- | --- |
+| `esvee/*.esvee.somatic.vcf.gz` | `structural_variants` | `vcf` |
+| `esvee/*.esvee.unfiltered.vcf.gz` | `structural_variants_raw`, `structural_variants_unfiltered` | `vcf_raw` |
+| `sv_chimera_filter/tumor/*.esvee.somatic.ffpe_filtered.vcf.gz` | `structural_variants_chimera_filtered` | same name |
+| `sv_chimera_filter/tumor/*.esvee.unfiltered.ffpe_filtered.vcf.gz` | `structural_variants_raw_chimera_filtered` | same name |
+
+`vcf_raw` deliberately uses Esvee's **unfiltered** calls, matching nf-gos;
+assembly-stage `*.esvee.raw.vcf.gz`, germline calls, and indexes are not substitutes.
+Existing GRIDSS matches retain priority when both callers' outputs are present.
+The legacy `--old` layout is unchanged.
+
+Supplied samplesheet paths still take precedence by default. To replace stale
+paths, clear those cells before regenerating the resume sheet; `gosh run outputs`
+also supports `--prefer-outputs`. In particular, a somatic FFPE VCF previously
+stored in `structural_variants_raw_chimera_filtered` must be cleared so discovery
+can select the unfiltered FFPE VCF instead.
+
 ---
 
 ### 4. Generate Intermediate Samplesheet: `gosh run samplesheet`
