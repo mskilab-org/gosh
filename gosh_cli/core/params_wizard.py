@@ -4,6 +4,7 @@ import json
 from .samplesheet import check_if_tumor_only
 from ..settings import GENOME_MAP as genome_map
 
+
 def create_params_file(
     preset="default",
     samplesheet="./samplesheet.csv",
@@ -40,7 +41,11 @@ def create_params_file(
     # Determine if tumor-only mode should be enabled
     try:
         is_tumor_only = check_if_tumor_only(input_path)
-        mode = "No normals found. Running in tumor-only mode." if is_tumor_only else "Running in paired tumor-normal mode."
+        mode = (
+            "No normals found. Running in tumor-only mode."
+            if is_tumor_only
+            else "Running in paired tumor-normal mode."
+        )
         print(mode)
     except (FileNotFoundError, ValueError) as e:
         print(f"Error checking samplesheet: {e}")
@@ -64,7 +69,7 @@ def create_params_file(
         "jabba": "sage,snpeff,snv_multiplicity,signatures,hrdetect",
         "hrd": "non_integer_balance,lp_phased_balance,events,fusions",
         "heme": "msisensorpro,hrdetect,onenesstwoness",
-        "taps": "non_integer_balance,lp_phased_balance"
+        "taps": "non_integer_balance,lp_phased_balance",
     }
 
     if preset != "default":
@@ -78,7 +83,7 @@ def create_params_file(
             " - jabba: runs all tools necessary for JaBbA outputs (skips tools: sage, snpeff, snv_multiplicity, signatures, hrdetect)\n"
             " - hrd: runs HR deficiency pipeline (skips tools: non_integer_balance, lp_phased_balance, events, fusions)\n"
             " - heme: runs heme pipeline (skips tools: msisensorpro, hrdetect, onenesstwoness)\n"
-            "Enter preset option (options: default, jabba, hrd, heme): "
+            "Enter preset option (options: default, ffpe, jabba, hrd, heme): "
         )
         preset_used = input(preset_prompt).strip().lower() or "default"
         if preset_used not in presets:
@@ -86,9 +91,7 @@ def create_params_file(
             preset_used = "default"
 
     # Prompt for genome
-    genome_prompt = (
-        f"Enter genome [default: hg19] (options: hg19, hg38, wmg-hg38) (Press Enter to use default): "
-    )
+    genome_prompt = f"Enter genome [default: hg19] (options: hg19, hg38, wmg-hg38) (Press Enter to use default): "
     genome_input = input(genome_prompt).strip() or "hg19"
     genome = genome_map.get(genome_input.lower())
 
@@ -107,44 +110,46 @@ def create_params_file(
         "outdir": outdir,
         "genome": genome,
         "email": email,
-        "tumor_only": is_tumor_only
+        "tumor_only": is_tumor_only,
     }
 
-    paired_or_tumoronly_params = {
-        "purple_use_svs": True,
-        "purple_use_smlvs": True
-    }
+    paired_or_tumoronly_params = {"purple_use_svs": True, "purple_use_smlvs": True}
     if is_tumor_only:
         paired_or_tumoronly_params["purple_use_svs"] = False
         paired_or_tumoronly_params["purple_use_smlvs"] = False
-    
+
     params.update(paired_or_tumoronly_params)
 
     if preset_used != "default":
         params["skip_tools"] = presets[preset_used]
     if preset_used == "heme":
         print("Adding heme specific parameters...")
-        params.update({
-            "is_heme": True,
-            "is_retier_whitelist_junctions": True,
-            "purple_use_svs": False,
-            "purple_use_smlvs": False,
-            "purple_highly_diploid_percentage": 1.0,
-            "purple_min_purity": 0.25,
-            "purple_ploidy_penalty_factor": 0.6,
-            "purple_revise_purity_ploidy": True
-        })
+        params.update(
+            {
+                "is_heme": True,
+                "is_retier_whitelist_junctions": True,
+                "purple_use_svs": False,
+                "purple_use_smlvs": False,
+                "purple_highly_diploid_percentage": 1.0,
+                "purple_min_purity": 0.25,
+                "purple_ploidy_penalty_factor": 0.6,
+                "purple_revise_purity_ploidy": True,
+            }
+        )
     if preset_used == "ffpe":
         print("Adding ffpe filtering parameters...")
-        params.update({
-            "filter_ffpe_impact": True,
-            "filter_ffpe_chimera": True,
-            "sv_filter_ffpe_chimera": True
-        })
-    
+        params.update(
+            {
+                "filter_ffpe_impact": True,
+                "filter_ffpe_chimera": True,
+                "sv_filter_ffpe_chimera": True,
+            }
+        )
+
     custom_params_prompt = "Enter custom parameters? Y/N (default: N): "
     custom_params = input(custom_params_prompt).strip().lower() or "n"
     if custom_params == "y":
+
         def parse_value(raw):
             if raw.lower() == "true":
                 return True
@@ -161,16 +166,24 @@ def create_params_file(
             return raw
 
         while True:
-            custom_params_key = input("Parameter name (Press Enter when done): ").strip()
+            custom_params_key = input(
+                "Parameter name (Press Enter when done): "
+            ).strip()
             if not custom_params_key:
-                confirm = input("No parameter name entered. Are you finished? Y/N (default: Y): ").strip().lower() or "y"
+                confirm = (
+                    input(
+                        "No parameter name entered. Are you finished? Y/N (default: Y): "
+                    )
+                    .strip()
+                    .lower()
+                    or "y"
+                )
                 if confirm == "y":
                     break
                 else:
                     continue
             raw_value = input(f"Value for '{custom_params_key}': ").strip()
             params[custom_params_key] = parse_value(raw_value)
-
 
     print("Parameters:")
     print(json.dumps(params, indent=4))

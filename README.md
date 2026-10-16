@@ -75,6 +75,30 @@ gosh run pipeline \
 gosh run pipeline --pipeline-dir ~/my-fork/nf-gos
 ```
 
+**Optional live monitoring with [gOS-eye](https://github.com/mskilab-org/gOS-eye):**
+
+Start the monitor on the same host as the Nextflow launcher, then enable weblog
+events for the run:
+
+```bash
+# Terminal 1: start gOS-eye (from its installation directory)
+./nextflow-monitor
+
+# Terminal 2: send events to http://localhost:8080/webhook
+gosh run pipeline --gos-eye
+```
+
+Open `http://localhost:8080` to view the dashboard. To use another port, start
+the monitor with `./nextflow-monitor -port 8998` and run
+`gosh run pipeline --gos-eye 8998` (or `--gos-eye=8998`); open
+`http://localhost:8998` instead. Ports must be integers from 1 through 65535.
+
+`--gos-eye [PORT]` adds Nextflow's `-with-weblog http://localhost:PORT/webhook`;
+it does not start the monitor or change pipeline parameters. It also works with
+`--bg`. Without `--gos-eye`, gOSh adds no weblog option. `localhost` is the
+Nextflow launch host, not the browser's machine; remote browser access requires
+an SSH tunnel or equivalent access to the monitor.
+
 **Presets for specific analyses:**
 ```bash
 gosh run pipeline --preset jabba    # JaBbA analysis only
@@ -112,6 +136,53 @@ gosh run outputs
 patient_id,bam_tumor,bam_normal,structural_variants,jabba_rds,purple_purity,purple_ploidy,...
 TCGA001,/results/TCGA001/alignment/tumor.bam,/results/TCGA001/alignment/normal.bam,...
 ```
+
+Both `gosh run outputs` and `gosh run samplesheet` recognize Esvee as a
+fallback for GRIDSS in the current `results/<patient>/` layout:
+
+| Esvee output | `outputs.csv` field | Resume samplesheet field |
+| --- | --- | --- |
+| `esvee/*.esvee.somatic.vcf.gz` | `structural_variants` | `vcf` |
+| `esvee/*.esvee.unfiltered.vcf.gz` | `structural_variants_raw`, `structural_variants_unfiltered` | `vcf_raw` |
+| `sv_chimera_filter/tumor/*.esvee.somatic.ffpe_filtered.vcf.gz` | `structural_variants_chimera_filtered` | same name |
+| `sv_chimera_filter/tumor/*.esvee.unfiltered.ffpe_filtered.vcf.gz` | `structural_variants_raw_chimera_filtered` | same name |
+
+`vcf_raw` deliberately uses Esvee's **unfiltered** calls, matching nf-gos;
+assembly-stage `*.esvee.raw.vcf.gz`, germline calls, and indexes are not substitutes.
+Existing GRIDSS matches retain priority when both callers' outputs are present.
+The legacy `--old` layout is unchanged.
+
+`gosh run outputs`, `gosh run samplesheet`, and `gosh run post` prefer matching
+results-directory paths by default (`--prefer-outputs`). Use `--no-prefer-outputs`
+to retain supplied samplesheet paths instead. Unmatched fields always retain
+their samplesheet values. This also applies to exports using `--old`. Discovery
+uses the first matching regex in priority order, not the first populated value.
+
+```bash
+gosh run outputs -p ./results -s ./samplesheet.csv
+gosh run samplesheet -p ./results -s ./samplesheet.csv
+gosh run post -p ./results
+```
+
+Add `--force` to the individual export commands to replace an existing destination
+CSV. `post` already forces both exports and forwards its results directory and
+preference to each. After reruns, the default prevents stale imported CBS paths
+from masking newly generated outputs.
+
+`gosh run outputs` and `gosh run samplesheet` also export `cbs_cov` from
+`<patient>/cbs/cov.rds` (or the corresponding legacy `--old` layout). This is
+nf-gos model coverage: paired-ratio-adjusted `foreground` rescaled to tumor
+coverage units, or unchanged valid foreground in tumor-only mode. Current-layout
+`coverage_tumor` discovery prefers this CBS file, falling back to
+`dryclean/tumor/drycleaned.cov.rds` when CBS coverage is absent, so downstream
+skilift pipelines receive the model-aligned foreground. `coverage_normal` and
+legacy `--old` coverage patterns are unchanged. Samplesheet-supplied paths
+take precedence only with `--no-prefer-outputs`. Generated samplesheets map `coverage_tumor`
+to tumor `dryclean_cov`; if it points to CBS coverage, restore the original
+dryclean path before regenerating paired CBS to avoid normalizing it twice.
+Use `cbs_cov` with matching `seg`/`nseg` and graph provenance for restarts;
+discovering an old file does not upgrade it to the new CBS bundle contract.
+
 
 ---
 
