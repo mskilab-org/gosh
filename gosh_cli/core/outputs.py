@@ -59,6 +59,7 @@ OUTPUT_KEYS = [
     "ichorcna_params",
     "purity",
     "ploidy",
+    "cbs_cov",
     "seg",
     "nseg",
     "variant_annotations_somatic",
@@ -124,6 +125,7 @@ SAMPLESHEET_FIELDNAMES = [
     "purity",
     "ploidy",
     "ichorcna_params",
+    "cbs_cov",
     "seg",
     "nseg",
     "vcf",
@@ -207,6 +209,7 @@ OUTPUT_FILES_MAPPING_OLD = {
     "cobalt_dir": r"cobalt/.*/cobalt/",
     "purple_pp_range": r"purple/.*/.*purple\.purity\.range\.tsv$",
     "purple_pp_best_fit": r"purple/.*/.*purple\.purity\.tsv$",
+    "cbs_cov": r"cbs/.*/cov\.rds$",
     "seg": r"cbs/.*/seg.rds",
     "nseg": r"cbs/.*/nseg.rds",
     "multiplicity": r"snv_multiplicity/.*/.*est_snv_cn_somatic\.rds$",
@@ -355,7 +358,10 @@ OUTPUT_FILES_MAPPING = {
     ],
     "frag_cov_tumor": r"fragcounter/tumor/cov\.rds$",
     "frag_cov_normal": r"fragcounter/normal/cov\.rds$",
-    "coverage_tumor": r"dryclean/tumor/drycleaned\.cov\.rds$",
+    "coverage_tumor": [
+        r"cbs/cov\.rds$",
+        r"dryclean/tumor/drycleaned\.cov\.rds$",
+    ],
     "coverage_normal": r"dryclean/normal/drycleaned\.cov\.rds$",
     "snvs_somatic": [
         r"sage/somatic/tumor_only_filter/.*\.sage\.pass_filtered\.tumoronly\.vcf\.gz$",
@@ -383,6 +389,7 @@ OUTPUT_FILES_MAPPING = {
     "purple_pp_best_fit_revised": r"purple/.*purple\.purity\.revised\.tsv$",
     "purple_qc": r"purple/.*purple\.qc$",
     "ichorcna_params": r"ichorcna/.*params\.txt$",
+    "cbs_cov": r"cbs/cov\.rds$",
     "seg": r"cbs/seg.rds",
     "nseg": r"cbs/nseg.rds",
     "multiplicity": r"snv_multiplicity/.*est_snv_cn_somatic\.rds$",
@@ -444,7 +451,7 @@ class Outputs:
         outputs_dir: str,
         samplesheet: str,
         use_old: bool = False,
-        prefer_outputs: bool = False,
+        prefer_outputs: bool = True,
     ):
         self.outputs_dir = os.path.abspath(outputs_dir)
         self.samplesheet = samplesheet
@@ -495,6 +502,7 @@ class Outputs:
                 "cobalt_dir": "cobalt_dir",
                 "purity": "purity",
                 "ploidy": "ploidy",
+                "cbs_cov": "cbs_cov",
                 "seg": "seg",
                 "nseg": "nseg",
                 "vcf": "structural_variants",
@@ -609,13 +617,14 @@ class Outputs:
 
         return patient_data
 
-    def _apply_old_mapping(self, record: dict) -> None:
-        """Apply the old output files mapping to the record."""
+    def _apply_old_mapping(self, record: dict, prefer_outputs: bool = True) -> None:
+        """Apply ordered legacy matches, retaining samplesheet values as fallback."""
         mapping = OUTPUT_FILES_MAPPING_OLD
         for key, pattern in mapping.items():
-            if record.get(key):
+            if not prefer_outputs and record.get(key):
                 continue  # prefer samplesheet value if available
             patterns = pattern if isinstance(pattern, list) else [pattern]
+            matched = False
             for pat in patterns:
                 # Derive process directory prefix from the pattern (assume the prefix is the literal part before '/.*/')
                 if "/.*/" in pat:
@@ -649,18 +658,21 @@ class Outputs:
                                 record[key] = filepath
                                 if pat.endswith("/"):
                                     record[key] = os.path.dirname(filepath)
+                                matched = True
                                 break
-                    if record.get(key):
+                    if matched:
                         break
+                if matched:
+                    break
 
     def _collect_outputs(
         self, use_old_output_files_mapping=False, prefer_outputs=True
     ) -> list:
         """
         For each patient_id from the samplesheet, scan the outputs directory to find files matching
-        the regex patterns defined in OUTPUT_FILES_MAPPING. For each output key, use the value from
-        the samplesheet metadata if present; otherwise, set it to the matched file path.
-        Use an empty string if nothing is found.
+        the regex patterns defined in OUTPUT_FILES_MAPPING. Matching outputs win by
+        default; prefer_outputs=False retains supplied samplesheet values instead.
+        Use an empty string if neither source supplies a value.
         """
         outputs_list = []
         for patient_id, data in self.samples_data.items():
@@ -691,7 +703,7 @@ class Outputs:
                 record[key] = data[key]
 
             if use_old_output_files_mapping:
-                self._apply_old_mapping(record)
+                self._apply_old_mapping(record, prefer_outputs=prefer_outputs)
             else:
                 patient_dir = os.path.join(self.outputs_dir, patient_id)
 
@@ -816,8 +828,7 @@ class Outputs:
                                 record[key] = filepath
                                 if pat_ends_with_slash:
                                     record[key] = os.path.dirname(filepath)
-                            is_key_populated = bool(record.get(key))
-                            if is_key_populated:
+                                # Stop only after discovery, not on a samplesheet fallback.
                                 is_pattern_filepath_matched = True
                                 break
                         if is_pattern_filepath_matched:
@@ -1033,6 +1044,7 @@ class Outputs:
                     "ichorcna_params": record.get("ichorcna_params", ""),
                     "purity": record.get("purity", ""),
                     "ploidy": record.get("ploidy", ""),
+                    "cbs_cov": record.get("cbs_cov", ""),
                     "seg": record.get("seg", ""),
                     "nseg": record.get("nseg", ""),
                     "vcf": record.get("structural_variants", ""),
@@ -1185,6 +1197,7 @@ class Outputs:
                         "ichorcna_params": record.get("ichorcna_params", ""),
                         "purity": record.get("purity", ""),
                         "ploidy": record.get("ploidy", ""),
+                        "cbs_cov": record.get("cbs_cov", ""),
                         "seg": record.get("seg", ""),
                         "nseg": record.get("nseg", ""),
                         "vcf": record.get("structural_variants", ""),

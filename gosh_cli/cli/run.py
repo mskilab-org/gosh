@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+from shlex import quote
 from os import makedirs, path, getenv
 from shutil import rmtree
 from sys import exit
@@ -213,6 +214,17 @@ ALL_TOOLS_STR = ",".join(ALL_TOOLS)
     help="Run Nextflow in the background and write output to a timestamped execution log.",
 )
 @click.option(
+    "--gos-eye",
+    is_flag=False,
+    flag_value=8080,
+    type=click.IntRange(1, 65535),
+    metavar="[PORT]",
+    help=(
+        "Send Nextflow weblog events to gOS-eye at http://localhost:PORT/webhook. "
+        "Omit PORT to use 8080; the monitor must already be running."
+    ),
+)
+@click.option(
     "-p", "--processes", help="Comma-separated list of process names to rerun"
 )
 @click.option("-s", "--samples", help="Comma-separated list of sample IDs to rerun")
@@ -252,6 +264,7 @@ def pipeline(
     profile,
     resume,
     background,
+    gos_eye,
     processes,
     samples,
     skip_tools,
@@ -548,6 +561,9 @@ def pipeline(
     if resume:
         command += " -resume"
 
+    if gos_eye is not None:
+        command += f" -with-weblog http://localhost:{gos_eye}/webhook"
+
     if not extra_args is None and not len(extra_args) == 0:
         command += f' {" ".join(extra_args)} '
 
@@ -577,17 +593,25 @@ def pipeline(
     type=click.Path(exists=True),
     help="Directory containing pipeline outputs",
 )
-def post(pipeline_output_dir):
+@click.option(
+    "--prefer-outputs/--no-prefer-outputs",
+    default=True,
+    show_default=True,
+    help="Prefer matching results-directory paths; retain samplesheet paths when no output matches.",
+)
+def post(pipeline_output_dir, prefer_outputs):
     from ..core.module_loader import (
         load_required_modules,
     )  # Keep this specific import if needed elsewhere
 
     env_defaults = get_environment_defaults()
     load_modules_command = load_required_modules(env_defaults)
+    preference = "--prefer-outputs" if prefer_outputs else "--no-prefer-outputs"
+    output_dir = quote(pipeline_output_dir)
     command = (
         f"{load_modules_command} "
-        f"{{ gosh run outputs --force; "
-        f"gosh run samplesheet --force; "
+        f"{{ gosh run outputs --force -p {output_dir} {preference}; "
+        f"gosh run samplesheet --force -p {output_dir} {preference}; "
         f"gosh debug log > debug.log; }}"
     )
     try:
@@ -623,10 +647,10 @@ from ..core.outputs import OUTPUT_KEYS
     help="Whether to use the old outputs mapping (default: False)",
 )
 @click.option(
-    "--prefer-outputs",
-    is_flag=True,
-    default=False,
-    help="If output and samplesheet column are both found, use the output column (default: False)",
+    "--prefer-outputs/--no-prefer-outputs",
+    default=True,
+    show_default=True,
+    help="Prefer matching results-directory paths; retain samplesheet paths when no output matches.",
 )
 @click.option(
     "-o",
@@ -765,6 +789,12 @@ from ..core.outputs import SAMPLESHEET_FIELDNAMES
     help="Whether to use the old outputs mapping (default: False)",
 )
 @click.option(
+    "--prefer-outputs/--no-prefer-outputs",
+    default=True,
+    show_default=True,
+    help="Prefer matching results-directory paths; retain samplesheet paths when no output matches.",
+)
+@click.option(
     "-o",
     "--output",
     type=click.Path(),
@@ -795,6 +825,7 @@ def samplesheet(
     pipeline_output_dir,
     samplesheet,
     old,
+    prefer_outputs,
     output,
     include_columns,
     exclude_columns,
@@ -868,7 +899,7 @@ def samplesheet(
             f"Warning: --force flag is not set, {output} file exists, so output will be written to {output_path}!"
         )
 
-    outputs_obj = Outputs(pipeline_output_dir, samplesheet, old)
+    outputs_obj = Outputs(pipeline_output_dir, samplesheet, old, prefer_outputs)
     outputs_obj.emit_samplesheet_csv(
         output_path, include_columns=include_list, exclude_columns=exclude_list
     )
