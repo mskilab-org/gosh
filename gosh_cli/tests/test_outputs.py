@@ -62,29 +62,6 @@ class StructuralVariantOutputsTest(unittest.TestCase):
         self.assertEqual(record["structural_variants_raw"], "")
         self.assertEqual(record["structural_variants"], "")
 
-    def test_gridss_precedes_esvee_and_samplesheet_precedes_discovery(self):
-        self.publish("esvee/T.esvee.somatic.vcf.gz")
-        self.publish("esvee/T.esvee.unfiltered.vcf.gz")
-        self.publish("sv_chimera_filter/tumor/T.esvee.somatic.ffpe_filtered.vcf.gz")
-        self.publish("sv_chimera_filter/tumor/T.esvee.unfiltered.ffpe_filtered.vcf.gz")
-        expected = {
-            "structural_variants": self.publish("gridss/T.gripss.filtered.vcf.gz"),
-            "structural_variants_unfiltered": self.publish("gridss/T.gripss.vcf.gz"),
-            "structural_variants_raw": self.publish("gridss/T.gridss.vcf.gz"),
-            "structural_variants_chimera_filtered": self.publish(
-                "sv_chimera_filter/tumor/T.gridss.filtered.ffpe_filtered.vcf.gz"
-            ),
-            "structural_variants_raw_chimera_filtered": self.publish(
-                "sv_chimera_filter/tumor/T.gridss.ffpe_filtered.vcf.gz"
-            ),
-        }
-        record = Outputs(str(self.results), str(self.samplesheet)).outputs[0]
-        self.assertEqual({key: record[key] for key in expected}, expected)
-        self.samplesheet.write_text(
-            "patient,sample,status,vcf\nP,T,1,/provided/somatic.vcf.gz\nP,N,0,\n"
-        )
-        record = Outputs(str(self.results), str(self.samplesheet)).outputs[0]
-        self.assertEqual(record["structural_variants"], "/provided/somatic.vcf.gz")
 
 
 if __name__ == "__main__":

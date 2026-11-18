@@ -99,6 +99,25 @@ it does not start the monitor or change pipeline parameters. It also works with
 Nextflow launch host, not the browser's machine; remote browser access requires
 an SSH tunnel or equivalent access to the monitor.
 
+For a shared monitor on another cluster host, use
+`--gos-eye 8998 --gos-eye-host a40-2001.cm.cluster`. Host accepts DNS names or
+IPv4 addresses, not URLs; a nondefault host requires `--gos-eye`. Supplying
+native `-with-weblog` together with `--gos-eye` is rejected. gOSh does not
+probe availability; unattended orchestration must enforce its own policy.
+
+Generate a run-local graph before execution with existing params and input:
+```bash
+gosh run pipeline --non-interactive --pipeline-dir /absolute/pipeline \
+  --samplesheet ./samplesheet.csv --params-file ./params.json --outdir ./results/ \
+  -- -preview -with-dag dag.dot
+```
+Preview preserves the params snapshot, uses temporary effective parameters,
+disables configured reports, and leaves a `.nextflow-preview_<timestamp>.log`.
+It never provisions secrets, runs the wizard, resumes, postprocesses, protects,
+or emits weblog events. Execution/preset/monitoring flags are rejected.
+Nextflow can still evaluate workflow setup and create engine bookkeeping;
+preview is not globally read-only. Its exit status is returned unchanged.
+
 **Presets for specific analyses:**
 ```bash
 gosh run pipeline --preset jabba    # JaBbA analysis only
@@ -106,6 +125,42 @@ gosh run pipeline --preset hrd      # HRD classification
 gosh run pipeline --preset heme     # Hematological cancers
 gosh run pipeline --preset ffpe     # FFPE chimera artifacts and FFPE small mutation artifacts filtered
 ```
+### Editable presets and unattended runs
+
+Canonical presets: `default`, `ffpe`, `tumor-only`, `heme`, `jabba`, `hrd`, `taps`.
+Overrides are JSON values in `${XDG_CONFIG_HOME:-$HOME/.config}/gosh/presets.json`,
+written atomically under `presets.lock`. New configs use mode 0600.
+
+```bash
+gosh preset list
+gosh preset show heme
+gosh preset set heme purple_min_purity 0.3
+gosh preset unset heme purple_min_purity
+gosh run params --preset ffpe --samplesheet ./samplesheet.csv \
+  --outdir ./results/ --reference hg19 --output ./params.json
+gosh run pipeline --non-interactive --samplesheet ./samplesheet.csv \
+  --params-file ./params.json --pipeline-dir /path/to/nf-gos --profile singularity,nyu
+```
+
+`run params` never prompts or submits; existing output files are refused. It validates
+status 0/1 and uniform paired versus singleton cases (`pair`, falling back to `patient`).
+Normal-only groups and mixed paired/singleton sheets fail. `tumor-only` requires status 1.
+FFPE enables the three FFPE artifact filters; heme retains its skip list and PURPLE settings.
+Preset edits affect newly generated params only: default execution of existing params
+does not reload overrides. An explicit nondefault `--preset` replaces its keys; explicit
+`--skip-tools`/`--include-tools` wins over the preset skip list.
+
+`preset set` rejects wrong built-in value types, invalid tool names, run-owned keys
+(`input,outdir,genome,email,tumor_only`) and credential-like keys. Malformed config fails
+without rewriting it. `unset` restores the built-in value, not an empty replacement.
+`--non-interactive` requires explicit existing params and samplesheet paths, validates
+the params mode, and rejects interactive process/sample rerun options.
+
+Without a CLI/environment OncoKB key, gosh verifies and reuses the existing Nextflow
+secret named `ONCOKB_API_KEY`; it never retrieves its value. Explicit provisioning is
+separate from the printed launch command, with sanitized failures. Do not put credentials
+in params or presets. Foreground gosh runs postprocessing and protection itself.
+
 
 **For NYU Imielinski Lab Users:**
 ```bash
@@ -456,13 +511,10 @@ Navigate to your chosen run directory in the terminal and execute the main comma
 * **Using an Existing params.json:** If you already have a configured params.json file, you can pass it directly:  
   `gosh run pipeline --params-file /path/to/your/params.json`
 
-* **OncoKB API Key:** Running the OncoKB annotation step requires an API key.  
-  * Provide it via the flag: `--oncokb-api-key YOUR_API_KEY`
-  * Or, set it as an environment variable (recommended):  
-    `export ONCOKB_API_KEY=YOUR_API_KEY`
-     Then run `gosh run pipeline`
-
-The pipeline will automatically detect the environment variable.
+* **OncoKB API Key:** By default, reuse the existing Nextflow secret `ONCOKB_API_KEY`.
+  Missing/unavailable secrets fail before analysis. Existing users may explicitly provision
+  it with `ONCOKB_API_KEY` in the environment or `--oncokb-api-key`; the key is not printed
+  in the pipeline command. Avoid command-line credentials in unattended scripts.
 
 * **Execution Profiles (--profile):** gosh-cli attempts to detect the execution environment (e.g., HPC scheduler) and suggests appropriate Nextflow profiles.  
   * **Automatic Detection:** nyu for NYU Langone HPC, nygc for NY Genome Center HPC.  
@@ -474,10 +526,8 @@ The pipeline will automatically detect the environment variable.
 
 * **Presets (--preset):** Apply predefined parameter sets and potentially skip irrelevant pipeline steps for specific analysis types (e.g., heme). This simplifies configuration for common scenarios.
 
-The following presets are supported:
-- `--preset jabba`: For running the JaBbA pipeline.
-- `--preset hrd`: For running the HRD classification pipeline.
-- `--preset heme`: For hematologic malignancies.
+Use `gosh preset list` for all canonical names and `gosh preset show NAME` for effective
+values. See **Editable presets and unattended runs** above for persistence and precedence.
 
 **Resuming a Pipeline Run:**
 

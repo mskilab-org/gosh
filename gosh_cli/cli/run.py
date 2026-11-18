@@ -8,17 +8,59 @@ from shlex import quote
 from os import makedirs, path, getenv
 from shutil import rmtree
 from sys import exit
-from subprocess import run, CalledProcessError
+from subprocess import run, CalledProcessError, TimeoutExpired
+from tempfile import TemporaryDirectory
 import click
 from ..core.module_loader import get_environment_defaults
 from ..utils.datasets import convert_to_datasets_path
-from ..settings import GENOME_MAP as genome_map
+from ..settings import ALL_TOOLS, ALL_TOOLS_STR, GENOME_MAP as genome_map
+from ..core.presets import PRESET_NAMES, build_params, resolve_preset
+from ..core.samplesheet import check_if_tumor_only
 
 
 @click.group(name="run")
 def run_cli():
     """Run pipeline commands"""
     pass
+
+
+@run_cli.command(name="params")
+@click.option("--preset", type=click.Choice(PRESET_NAMES), default="default")
+@click.option("--samplesheet", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--outdir", required=True, type=click.Path())
+@click.option("--reference", default="hg19", show_default=True)
+@click.option("--output", required=True, type=click.Path(dir_okay=False))
+def params_command(preset, samplesheet, outdir, reference, output):
+    """Write a new parameter snapshot without prompts, credentials, or Slurm."""
+    try:
+        params = build_params(preset, samplesheet, outdir, reference)
+        makedirs(path.dirname(path.abspath(output)), exist_ok=True)
+        with open(output, "x") as stream:
+            json.dump(params, stream, indent=4, allow_nan=False)
+            stream.write("\n")
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(output)
+
+
+def _ensure_oncokb_secret(nextflow, module_command, api_key):
+    """Provision or check the named secret without exposing its value."""
+    args = [nextflow, "secrets"]
+    args += ["set", "ONCOKB_API_KEY", api_key] if api_key else ["list"]
+    if module_command:
+        # The key is only a positional argument, never part of shell source.
+        args = ["/bin/bash", "-c", module_command + 'exec "$@"', "gosh-secrets", *args]
+    error = (
+        "Unable to provision Nextflow secret ONCOKB_API_KEY"
+        if api_key
+        else "Nextflow secret ONCOKB_API_KEY is required"
+    )
+    try:
+        result = run(args, check=True, capture_output=True, text=True, timeout=60)
+    except (OSError, CalledProcessError, TimeoutExpired):
+        raise click.ClickException(error) from None
+    if not api_key and "ONCOKB_API_KEY" not in result.stdout.splitlines():
+        raise click.ClickException(error)
 
 
 # ---------------------------------------------------------------------------
@@ -158,33 +200,6 @@ def trace_merge(pipeline_info_dir, work_dir, output, no_work_dir, no_trace_file)
         )
 
 
-# Define the full list of tools available in the pipeline
-ALL_TOOLS = [
-    "aligner",
-    "collect_wgs_metrics",
-    "collect_multiple_metrics",
-    "estimate_library_complexity",
-    "msisensorpro",
-    "gridss",
-    "amber",
-    "fragcounter",
-    "dryclean",
-    "cbs",
-    "sage",
-    "purple",
-    "jabba",
-    "non_integer_balance",
-    "lp_phased_balance",
-    "events",
-    "fusions",
-    "snpeff",
-    "snv_multiplicity",
-    "oncokb",
-    "signatures",
-    "hrdetect",
-    "onenesstwoness",
-]
-ALL_TOOLS_STR = ",".join(ALL_TOOLS)
 
 
 @run_cli.command(context_settings=dict(ignore_unknown_options=True))
@@ -197,8 +212,9 @@ ALL_TOOLS_STR = ",".join(ALL_TOOLS)
     "-r", "--reference", default="hg19", help="Genome reference version (hg19 or hg38)"
 )
 @click.option(
-    "--params-file", default="./params.json", help="Path to parameters JSON file"
+    "--params-file", default=None, help="Path to parameters JSON file (interactive default: ./params.json)"
 )
+@click.option("--non-interactive", is_flag=True, help="Require explicit existing params and samplesheet; never prompt.")
 @click.option(
     "--profile",
     default="singularity",
@@ -224,6 +240,7 @@ ALL_TOOLS_STR = ",".join(ALL_TOOLS)
         "Omit PORT to use 8080; the monitor must already be running."
     ),
 )
+@click.option("--gos-eye-host", default="localhost", show_default=True, help="gOS-eye DNS hostname or IPv4 address.")
 @click.option(
     "-p", "--processes", help="Comma-separated list of process names to rerun"
 )
@@ -239,12 +256,12 @@ ALL_TOOLS_STR = ",".join(ALL_TOOLS)
 @click.option(
     "--preset",
     default="default",
-    type=click.Choice(["default", "jabba", "hrd", "heme"]),
-    help='Preset option: "default" (all tools), "jabba", "hrd", or "heme"',
+    type=click.Choice(PRESET_NAMES),
+    help="Apply a preset to this run; default preserves existing parameter snapshots.",
 )
 @click.option(
     "--oncokb-api-key",
-    help="OncoKB API key for accessing OncoKB annotations. Required if using OncoKB",
+    help="Provision OncoKB credentials; otherwise reuse the named Nextflow secret.",
 )
 @click.option(
     "-c",
@@ -261,10 +278,12 @@ def pipeline(
     outdir,
     reference,
     params_file,
+    non_interactive,
     profile,
     resume,
     background,
     gos_eye,
+    gos_eye_host,
     processes,
     samples,
     skip_tools,
@@ -275,10 +294,40 @@ def pipeline(
     extra_args,
 ):
     # Validate mutually exclusive options
-    if skip_tools and include_tools:
+    preview = "-preview" in extra_args
+    host_label = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    if len(gos_eye_host) > 253 or not re.fullmatch(host_label + r"(?:\." + host_label + r")*", gos_eye_host):
+        raise click.UsageError("--gos-eye-host requires a DNS hostname or IPv4 address")
+    if gos_eye_host != "localhost" and gos_eye is None:
+        raise click.UsageError("--gos-eye-host requires --gos-eye")
+    native_options = {arg.split("=", 1)[0] for arg in extra_args}
+    if gos_eye is not None and "-with-weblog" in native_options:
+        raise click.UsageError("--gos-eye conflicts with native -with-weblog")
+    if preview:
+        if (background or processes is not None or samples is not None
+                or preset != "default" or skip_tools is not None or include_tools is not None
+                or gos_eye is not None or gos_eye_host != "localhost" or oncokb_api_key is not None):
+            raise click.UsageError("Preview cannot use execution, preset, monitoring, or credential options")
+        forbidden = {"-resume", "-bg", "-with-weblog", "-with-report", "-with-trace",
+                     "-with-timeline", "-with-notification", "-N"}
+        if native_options & forbidden:
+            raise click.UsageError("Preview cannot use native execution/report/notification options")
+        if not path.isfile(params_file or "./params.json"):
+            raise click.UsageError("Preview requires an existing params file; it never runs the wizard")
+    if skip_tools is not None and include_tools is not None:
         raise click.UsageError(
             "Options --skip-tools and --include-tools are mutually exclusive."
         )
+    if non_interactive:
+        if not params_file or not samplesheet:
+            raise click.UsageError("--non-interactive requires explicit --params-file and --samplesheet")
+        if processes is not None or samples is not None:
+            raise click.UsageError("--non-interactive cannot use --processes or --samples rerun options")
+        if not path.isfile(params_file):
+            raise click.ClickException(f"Parameters file '{params_file}' not found")
+        if not path.isfile(samplesheet):
+            raise click.ClickException(f"Samplesheet '{samplesheet}' not found")
+    params_file = params_file or "./params.json"
 
     from ..core.nextflow import NextflowRunner
     from ..core.params_wizard import create_params_file
@@ -286,19 +335,8 @@ def pipeline(
         get_entries_with_process_names,
         get_entries_with_sample_names,
     )
-    from ..core.nextflow import NextflowRunner
-    from ..core.params_wizard import create_params_file
-    from ..core.nextflow_log import (
-        get_entries_with_process_names,
-        get_entries_with_sample_names,
-    )
-    from ..core.module_loader import (
-        load_required_modules,
-    )  # Keep this specific import if needed elsewhere
+    from ..core.module_loader import load_required_modules
 
-    # for arg in extra_args:
-    #     if not arg.startswith('--') and not arg.startswith('-'):
-    #         raise f"Argument {arg} provided is not parsable"
     is_samplesheet_provided = not samplesheet is None
     default_samplesheet = "./samplesheet.csv"
     if not is_samplesheet_provided:
@@ -311,12 +349,10 @@ def pipeline(
     if not pipeline_dir:
         pipeline_dir = env_defaults.get("pipeline-dir", pipeline_dir)
 
-    # Add the environment-specific profile to the default profile
-    if "profile" in env_defaults:
-        profile = f"{profile},{env_defaults['profile']}"
+    # Host defaults augment explicit profiles without duplicating them.
+    profiles = profile.split(",") + env_defaults.get("profile", "").split(",")
+    profile = ",".join(dict.fromkeys(p.strip() for p in profiles if p.strip()))
 
-    # Create hg19 directory (required for fragcounter)
-    makedirs(reference, exist_ok=True)
 
     # Check if params_file is provided and exists
     is_params_file_found = path.isfile(params_file)
@@ -338,9 +374,9 @@ def pipeline(
 
     # Determine the skip_tools value based on flags and presets
     skip_tools_value = None
-    if include_tools:
+    if include_tools is not None:
         # Calculate skip_tools based on include_tools
-        included_set = set(t.strip() for t in include_tools.split(","))
+        included_set = {t.strip() for t in include_tools.split(",")} if include_tools else set()
         # Validate included tools
         invalid_tools = included_set - set(ALL_TOOLS)
         if invalid_tools:
@@ -350,29 +386,24 @@ def pipeline(
         skipped_set = set(ALL_TOOLS) - included_set
         skip_tools_value = ",".join(sorted(list(skipped_set)))
         print(f"Calculating skip_tools based on --include-tools: {skip_tools_value}")
-    elif skip_tools:
+    elif skip_tools is not None:
         # Validate skipped tools
-        skipped_set = set(t.strip() for t in skip_tools.split(","))
+        skipped_set = {t.strip() for t in skip_tools.split(",")} if skip_tools else set()
         invalid_tools = skipped_set - set(ALL_TOOLS)
         if invalid_tools:
             raise click.BadParameter(
                 f"Invalid tools specified in --skip-tools: {', '.join(invalid_tools)}. Available: {ALL_TOOLS_STR}"
             )
         skip_tools_value = skip_tools  # Use provided skip_tools directly
-    elif preset != "default":
-        # Calculate skip_tools based on preset if no specific flags are given
-        if preset == "jabba":
-            skip_tools_value = "sage,snpeff,snv_multiplicity,signatures,hrdetect"
-        elif preset == "hrd":
-            skip_tools_value = "non_integer_balance,lp_phased_balance,events,fusions"
-        elif preset == "heme":
-            skip_tools_value = "msisensorpro,hrdetect,onenesstwoness"
-        print(f"Using preset '{preset}', setting skip_tools to: {skip_tools_value}")
-    # else: skip_tools_value remains None (or empty string equivalent in params)
 
     # Read and update params.json with CLI flag values
-    with open(params_file, "r") as pf:
-        params_data = json.load(pf)
+    try:
+        with open(params_file, "r") as pf:
+            params_data = json.load(pf)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(f"Cannot read parameters file: {params_file}") from exc
+    if not isinstance(params_data, dict):
+        raise click.ClickException("Parameters file must be a JSON object")
 
     # Overwrite keys from CLI flags
 
@@ -383,6 +414,24 @@ def pipeline(
         raise ValueError(
             f'Path "{samplesheet}" does not exist! Please provide a valid samplesheet path'
         )
+    if preview or non_interactive or preset == "tumor-only":
+        try:
+            tumor_only = check_if_tumor_only(samplesheet)
+        except (OSError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        if (preview or non_interactive) and (
+            type(params_data.get("tumor_only")) is not bool
+            or params_data["tumor_only"] != tumor_only
+        ):
+            raise click.ClickException("params.tumor_only is inconsistent with the samplesheet")
+        if preset == "tumor-only" and not tumor_only:
+            raise click.ClickException("The tumor-only preset requires every sample to have status 1")
+    # A prepared run deliberately omits --preset, keeping its immutable snapshot.
+    if preset != "default":
+        try:
+            params_data.update(resolve_preset(preset))
+        except (OSError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
     params_data["input"] = samplesheet
     params_data["outdir"] = outdir
 
@@ -403,24 +452,12 @@ def pipeline(
     if skip_tools_value is not None:
         params_data["skip_tools"] = skip_tools_value
 
-    with open(params_file, "w") as pf:
-        json.dump(params_data, pf, indent=4)
+    if not preview:
+        # Normal execution retains its params rewrite and reference directory.
+        makedirs(reference, exist_ok=True)
+        with open(params_file, "w") as pf:
+            json.dump(params_data, pf, indent=4)
 
-    oncokb_api_key = oncokb_api_key or getenv("ONCOKB_API_KEY", None)
-    if (
-        skip_tools_value is not None
-        and "oncokb" not in skip_tools_value
-        and not oncokb_api_key
-    ):
-        print(
-            "OncoKB API key is required for accessing OncoKB annotations. Please provide it using the --oncokb-api-key flag or set ONCOKB_API_KEY in your environment."
-        )
-        exit(1)
-    elif not oncokb_api_key:
-        print(
-            "OncoKB API key is required for accessing OncoKB annotations. Please provide it using the --oncokb-api-key flag or set ONCOKB_API_KEY in your environment."
-        )
-        exit(1)
 
     # Print all parameters
     print("Running gOS with the following parameters:")
@@ -515,10 +552,15 @@ def pipeline(
             exit(0)
 
     load_modules_command = load_required_modules(env_defaults)
+    if load_modules_command:
+        load_modules_command = "source /etc/profile.d/modules.sh && " + load_modules_command
 
     runner = NextflowRunner()
+    if not preview:
+        _ensure_oncokb_secret(
+            runner.cmd, load_modules_command, oncokb_api_key or getenv("ONCOKB_API_KEY")
+        )
 
-    # configs = " ".join([f'-c {conf}' for conf in config])
 
     configs_lst = []
     for conf in config:
@@ -534,9 +576,30 @@ def pipeline(
             next
         configs_lst.append(out_conf)
 
-    configs = " ".join([f"-c {resolved_config}" for resolved_config in configs_lst])
+    if preview:
+        configs_lst.append(path.abspath(path.join(path.dirname(__file__), "..", "core", "preview.config")))
+    configs = " ".join(f"-c {quote(resolved_config)}" for resolved_config in configs_lst)
     run_timestamp = runner.get_timestamp()
-    nextflow_command = f"{runner.cmd} "
+    if preview:
+        # Keep the snapshot private and alive until Nextflow has exited. Relative
+        # input/output paths still resolve in the unchanged study working directory.
+        with TemporaryDirectory(prefix=".gosh-preview-", dir=path.dirname(path.abspath(params_file))) as temp_dir:
+            effective_params = path.join(temp_dir, "params.json")
+            with open(effective_params, "w") as stream:
+                json.dump(params_data, stream, allow_nan=False)
+            command = (
+                f"{load_modules_command} NXF_SYNTAX_PARSER=v1 {quote(runner.cmd)} {configs} "
+                f"-log .nextflow-preview_{run_timestamp}.log run {quote(pipeline_dir)} "
+                f"-params-file {quote(effective_params)} -profile {quote(profile)} "
+                + " ".join(quote(arg) for arg in extra_args)
+            )
+            print(f"command to run: {command}")
+            result = run(command, shell=True, executable="/bin/bash")
+            if result.returncode:
+                raise click.exceptions.Exit(result.returncode)
+        return
+    # nf-gos uses legacy DSL constructs; Nextflow >=26.04 defaults to the strict parser.
+    nextflow_command = f"NXF_SYNTAX_PARSER=v1 {runner.cmd} "
     pid_file = None
     if background:
         pid_file = f".nextflow_{run_timestamp}.pid"
@@ -544,28 +607,24 @@ def pipeline(
 
     command = (
         f"{load_modules_command} "
-        f"{runner.cmd} secrets set ONCOKB_API_KEY {oncokb_api_key} && "
         f"{nextflow_command}"
         f"{configs} "
         f"-log .nextflow_{run_timestamp}.log "
-        f"run {pipeline_dir} "
-        f"-params-file {params_file} "
-        f"-profile {profile} "
+        f"run {quote(pipeline_dir)} "
+        f"-params-file {quote(params_file)} "
+        f"-profile {quote(profile)} "
         f"-with-report report_{run_timestamp}.html "
         f"-with-trace"
-        # f"; gosh run outputs --force"
-        # f"; gosh run samplesheet --force"
-        # f"; gosh debug log > debug.log"
     )
 
     if resume:
         command += " -resume"
 
     if gos_eye is not None:
-        command += f" -with-weblog http://localhost:{gos_eye}/webhook"
+        command += " -with-weblog " + quote(f"http://{gos_eye_host}:{gos_eye}/webhook")
 
     if not extra_args is None and not len(extra_args) == 0:
-        command += f' {" ".join(extra_args)} '
+        command += f' {" ".join(quote(arg) for arg in extra_args)} '
 
 
     if background:

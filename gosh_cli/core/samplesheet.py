@@ -2,27 +2,33 @@ import csv
 import os
 
 def check_if_tumor_only(samplesheet_path):
-    """
-    Check the 'status' column in the samplesheet to determine if the pipeline should run in tumor-only mode.
-    Tumor-only mode is enabled if there are no rows with 'status' == '0' (i.e., no normal samples).
-
-    Args:
-        samplesheet_path (str): Path to the samplesheet CSV file.
-
-    Returns:
-        bool: True if tumor-only mode should be enabled, False otherwise.
-    """
-    has_normal = False
-    if not os.path.exists(samplesheet_path):
+    """Validate all case statuses in one pass and return the uniform run mode."""
+    if not samplesheet_path or not os.path.isfile(samplesheet_path):
         raise FileNotFoundError(f"Samplesheet not found at {samplesheet_path}")
 
-    with open(samplesheet_path, 'r') as csvfile:
+    cases = {}
+    with open(samplesheet_path, newline="") as csvfile:
         reader = csv.DictReader(csvfile)
-        if 'status' not in reader.fieldnames:
+        fields = reader.fieldnames or []
+        if "status" not in fields:
             raise ValueError("Samplesheet missing required 'status' column.")
-        for row in reader:
-            if row.get('status') == '0':
-                print(f"Normal sample found: {row}")
-                has_normal = True
-                break
-    return not has_normal  # Returns True if tumor-only (no normal samples found)
+        if "pair" not in fields and "patient" not in fields:
+            raise ValueError("Samplesheet requires a 'pair' or 'patient' column.")
+        for line, row in enumerate(reader, start=2):
+            status = (row.get("status") or "").strip()
+            if status not in ("0", "1"):
+                raise ValueError(f"Samplesheet row {line}: status must be 0 or 1")
+            case = (row.get("pair") or "").strip() or (row.get("patient") or "").strip()
+            if not case:
+                raise ValueError(f"Samplesheet row {line}: pair or patient must be nonempty")
+            cases[case] = cases.get(case, 0) | (1 if status == "1" else 2)
+
+    if not cases:
+        raise ValueError("Samplesheet must contain at least one sample")
+    for case, statuses in cases.items():
+        if statuses == 2:
+            raise ValueError(f"Samplesheet case {case} contains only normal samples")
+    modes = set(cases.values())
+    if len(modes) != 1:
+        raise ValueError("Samplesheet mixes paired and singleton tumor cases")
+    return modes == {1}

@@ -27,6 +27,7 @@ def get_environment_defaults():
         'cn-': nyu_defaults,
         'gn-': nyu_defaults,
         'gpu-': nyu_defaults,
+        'rtx': nyu_defaults,
         'bigpurple': nyu_defaults,
 
         'mskilab0': nygc_defaults,

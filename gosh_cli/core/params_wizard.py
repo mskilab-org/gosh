@@ -1,8 +1,7 @@
 import os
 import sys
 import json
-from .samplesheet import check_if_tumor_only
-from ..settings import GENOME_MAP as genome_map
+from .presets import PRESET_NAMES, build_params
 
 
 def create_params_file(
@@ -13,8 +12,6 @@ def create_params_file(
 ):
     default_input = samplesheet
     default_outdir = outdir
-    default_tools = "all"
-    default_genome = genome_map[genome]
     default_email = "example_email@gmail.com"
 
     # Check if default input exists
@@ -38,19 +35,6 @@ def create_params_file(
                 print(f"Error: The provided input file '{input_path}' does not exist.")
                 sys.exit(1)
 
-    # Determine if tumor-only mode should be enabled
-    try:
-        is_tumor_only = check_if_tumor_only(input_path)
-        mode = (
-            "No normals found. Running in tumor-only mode."
-            if is_tumor_only
-            else "Running in paired tumor-normal mode."
-        )
-        print(mode)
-    except (FileNotFoundError, ValueError) as e:
-        print(f"Error checking samplesheet: {e}")
-        sys.exit(1)
-
     # Check if default outdir exists
     outdir_exists = os.path.exists(default_outdir)
     outdir_status = "found!" if outdir_exists else "not found!"
@@ -62,89 +46,33 @@ def create_params_file(
         outdir_prompt = f"Enter output directory [default: {default_outdir} ({outdir_status})] (Press Enter to use default): "
         outdir = input(outdir_prompt).strip() or default_outdir
 
-    # New preset based configuration.
-    presets = {
-        "default": "",
-        "ffpe": "",
-        "jabba": "sage,snpeff,snv_multiplicity,signatures,hrdetect",
-        "hrd": "non_integer_balance,lp_phased_balance,events,fusions",
-        "heme": "msisensorpro,hrdetect,onenesstwoness",
-        "taps": "non_integer_balance,lp_phased_balance",
-    }
-
     if preset != "default":
         print(f"Preset automatically set to '{preset}'")
         preset_used = preset
     else:
         preset_prompt = (
-            "Available presets:\n"
-            " - default (recommended): runs all tools; aligner, bamqc, gridss, amber, fragcounter, dryclean, cbs, sage, purple, jabba, non_integer_balance, lp_phased_balance, events, fusions, snpeff, snv_multiplicity, signatures, hrdetect \n"
-            " - ffpe (runs all tools plus chimera filtering during aligner and gridss steps): aligner, bamqc, gridss, amber, fragcounter, dryclean, cbs, sage, purple, jabba, non_integer_balance, lp_phased_balance, events, fusions, snpeff, snv_multiplicity, signatures, hrdetect \n"
-            " - jabba: runs all tools necessary for JaBbA outputs (skips tools: sage, snpeff, snv_multiplicity, signatures, hrdetect)\n"
-            " - hrd: runs HR deficiency pipeline (skips tools: non_integer_balance, lp_phased_balance, events, fusions)\n"
-            " - heme: runs heme pipeline (skips tools: msisensorpro, hrdetect, onenesstwoness)\n"
-            "Enter preset option (options: default, ffpe, jabba, hrd, heme): "
+            f"Available presets: {', '.join(PRESET_NAMES)}\n"
+            "Enter preset option [default]: "
         )
         preset_used = input(preset_prompt).strip().lower() or "default"
-        if preset_used not in presets:
+        if preset_used not in PRESET_NAMES:
             print(f"Warning: Invalid preset '{preset_used}'. Using default.")
             preset_used = "default"
 
     # Prompt for genome
-    genome_prompt = f"Enter genome [default: hg19] (options: hg19, hg38, wmg-hg38) (Press Enter to use default): "
-    genome_input = input(genome_prompt).strip() or "hg19"
-    genome = genome_map.get(genome_input.lower())
-
-    if not genome in ["GATK.GRCh37", "GATK.GRCh38", "WMG-hg38"]:
-        raise ValueError("genome provided not valid")
-        # print(f"Warning: Invalid genome '{genome_input}'. Using default '{default_genome}'.")
-        # genome = default_genome
+    genome_prompt = f"Enter genome [default: {genome}] (options: hg19, hg38, wmg-hg38) (Press Enter to use default): "
+    genome = input(genome_prompt).strip() or genome
 
     # Prompt for email
     email_prompt = f"Enter email address [{default_email}] (Press Enter to skip): "
     email = input(email_prompt).strip() or ""
 
-    # Create params dictionary
-    params = {
-        "input": input_path,
-        "outdir": outdir,
-        "genome": genome,
-        "email": email,
-        "tumor_only": is_tumor_only,
-    }
-
-    paired_or_tumoronly_params = {"purple_use_svs": True, "purple_use_smlvs": True}
-    if is_tumor_only:
-        paired_or_tumoronly_params["purple_use_svs"] = False
-        paired_or_tumoronly_params["purple_use_smlvs"] = False
-
-    params.update(paired_or_tumoronly_params)
-
-    if preset_used != "default":
-        params["skip_tools"] = presets[preset_used]
-    if preset_used == "heme":
-        print("Adding heme specific parameters...")
-        params.update(
-            {
-                "is_heme": True,
-                "is_retier_whitelist_junctions": True,
-                "purple_use_svs": False,
-                "purple_use_smlvs": False,
-                "purple_highly_diploid_percentage": 1.0,
-                "purple_min_purity": 0.25,
-                "purple_ploidy_penalty_factor": 0.6,
-                "purple_revise_purity_ploidy": True,
-            }
-        )
-    if preset_used == "ffpe":
-        print("Adding ffpe filtering parameters...")
-        params.update(
-            {
-                "filter_ffpe_impact": True,
-                "filter_ffpe_chimera": True,
-                "sv_filter_ffpe_chimera": True,
-            }
-        )
+    params = build_params(preset_used, input_path, outdir, genome, email)
+    print(
+        "No normals found. Running in tumor-only mode."
+        if params["tumor_only"]
+        else "Running in paired tumor-normal mode."
+    )
 
     custom_params_prompt = "Enter custom parameters? Y/N (default: N): "
     custom_params = input(custom_params_prompt).strip().lower() or "n"

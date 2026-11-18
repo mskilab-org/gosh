@@ -21,7 +21,7 @@ setup(
     packages=find_packages(where='.'),
     package_dir={'': '.'},
     include_package_data=True,
-    package_data={'gosh_cli': ['utils/*.txt']},
+    package_data={'gosh_cli': ['utils/*.txt', 'core/*.config']},
     install_requires=[
         'Click',
         'openai',
