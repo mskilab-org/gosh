@@ -5,6 +5,7 @@ from .cli.help import help_cli
 from .cli.protect import protect_cli
 from .cli.purge import purge_cli
 from .cli.cache import cache_cli
+from .cli.preset import preset_cli
 from gosh_cli import __version__
 
 @click.group()
@@ -20,3 +21,4 @@ cli.add_command(help_cli, name='help')
 cli.add_command(protect_cli, name='protect')
 cli.add_command(purge_cli, name='purge')
 cli.add_command(cache_cli, name='cache')
+cli.add_command(preset_cli, name='preset')

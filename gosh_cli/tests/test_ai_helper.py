@@ -6,7 +6,7 @@ import click
 
 # Add the bin directory to the Python path so we can import the module
 sys.path.append(os.path.join(os.path.dirname(__file__), '../../'))
-from gosh.utils.ai_helper import extract_error_messages, query_ai, get_error_analysis_and_solution
+from gosh_cli.utils.ai_helper import extract_error_messages, query_ai, get_error_analysis_and_solution
 
 def test_error_extraction():
     """Test the error message extraction functionality"""
